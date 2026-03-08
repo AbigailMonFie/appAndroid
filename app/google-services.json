@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "913198340441",
+    "project_id": "mensajeria-fierro",
+    "storage_bucket": "mensajeria-fierro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:913198340441:android:75a740509d7b6db3335448",
+        "android_client_info": {
+          "package_name": "com.fierro.mensajeria"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC5Gb7fkAYo7kECL4ZRNFM88GrwJYpf30A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
