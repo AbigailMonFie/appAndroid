@@ -12,6 +12,7 @@ room = "2.6.1"
 ksp = "2.3.2"
 googleServices = "4.4.2"
 firebaseBom = "33.9.0"
+agora = "4.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,7 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
+agora-rtc = { group = "io.agora.rtc", name = "full-sdk", version.ref = "agora" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
