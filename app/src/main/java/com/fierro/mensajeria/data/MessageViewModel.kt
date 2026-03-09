@@ -85,6 +85,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun fetchOwnProfile() {
+        if (myId == "anonimo") return
         usersCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 _ownUser.value = snapshot.toObject(User::class.java)
@@ -93,21 +94,23 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun listenForLastMessages() {
+        if (myId == "anonimo") return
         messagesCollection.orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     val allMessages = snapshot.toObjects(FirebaseMessage::class.java)
+                    val myMessages = allMessages.filter { it.senderId == myId || it.receiverId == myId }
                     val lastMsgsMap = mutableMapOf<String, FirebaseMessage>()
                     val unreadCountsMap = mutableMapOf<String, Int>()
                     
-                    allMessages.forEach { msg ->
+                    myMessages.forEach { msg ->
                         val partnerId = if (msg.senderId == myId) msg.receiverId else msg.senderId
                         if (!lastMsgsMap.containsKey(partnerId)) {
                             lastMsgsMap[partnerId] = msg
                         }
                         if (msg.receiverId == myId) {
-                            val currentPartner = _selectedUser.value?.uid ?: _selectedGroup.value?.id
-                            if (partnerId != currentPartner) {
+                            val currentOpenChatId = _selectedUser.value?.uid ?: _selectedGroup.value?.id
+                            if (partnerId != currentOpenChatId) {
                                 unreadCountsMap[partnerId] = (unreadCountsMap[partnerId] ?: 0) + 1
                             }
                         }
@@ -119,7 +122,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun listenForArchivedChats() {
-        if (auth.currentUser == null) return
+        if (myId == "anonimo") return
         db.collection("users").document(myId).collection("archived")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
@@ -129,7 +132,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun listenForPinnedChats() {
-        if (auth.currentUser == null) return
+        if (myId == "anonimo") return
         db.collection("users").document(myId).collection("pinned")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
@@ -139,7 +142,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun listenForCallLogs() {
-        if (auth.currentUser == null) return
+        if (myId == "anonimo") return
         db.collection("users").document(myId).collection("calls")
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, _ ->
@@ -174,18 +177,12 @@ class MessageViewModel : ViewModel() {
             try {
                 val inputStream = context.contentResolver.openInputStream(uri)
                 val bitmap = BitmapFactory.decodeStream(inputStream)
-                
-                // Comprimir imagen para que quepa en Firestore
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 50, outputStream)
                 val byteArray = outputStream.toByteArray()
                 val base64String = "data:image/jpeg;base64," + Base64.encodeToString(byteArray, Base64.DEFAULT)
-                
                 usersCollection.document(myId).update("profilePicUrl", base64String)
-                Log.d("FIRESTORE", "Foto de perfil actualizada con éxito (Base64)")
-            } catch (e: Exception) {
-                Log.e("FIRESTORE", "Error al procesar foto: ${e.message}")
-            }
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error al procesar foto: ${e.message}") }
         }
     }
 
@@ -198,6 +195,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun fetchGroups() {
+        if (myId == "anonimo") return
         groupsCollection.whereArrayContains("members", myId)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
@@ -207,6 +205,7 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun listenForCalls() {
+        if (myId == "anonimo") return
         callsCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 val call = snapshot.toObject(CallInfo::class.java)
@@ -222,13 +221,11 @@ class MessageViewModel : ViewModel() {
         val targetId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val targetName = _selectedGroup.value?.name ?: _selectedUser.value?.displayName ?: "Chat"
         val call = CallInfo(myId, auth.currentUser?.displayName ?: "Alguien", targetId, type, "RINGING")
-        
         if (_selectedGroup.value != null) {
             _selectedGroup.value?.members?.forEach { if (it != myId) callsCollection.document(it).set(call) }
         } else {
             callsCollection.document(targetId).set(call)
         }
-        
         _currentCall.value = call.copy(status = "CALLING")
         addCallToLog(CallLog(UUID.randomUUID().toString(), targetName, type, System.currentTimeMillis(), true))
     }
