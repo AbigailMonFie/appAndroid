@@ -46,6 +46,9 @@ import coil.compose.AsyncImage
 import com.fierro.mensajeria.data.*
 import com.fierro.mensajeria.ui.theme.ChatScreen
 import com.fierro.mensajeria.ui.theme.MensajeriaTheme
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
@@ -77,7 +80,10 @@ class MainActivity : ComponentActivity() {
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (currentUser == null) {
-                        LoginScreen(onLoginSuccess = { chatViewModel.onUserAuthenticated() }, viewModel = authViewModel)
+                        LoginScreen(
+                            onLoginSuccess = { chatViewModel.onUserAuthenticated() }, 
+                            viewModel = authViewModel
+                        )
                     } else if (selectedUser == null && selectedGroup == null) {
                         UserListScreen(viewModel = chatViewModel, authViewModel = authViewModel)
                     } else {
@@ -130,23 +136,74 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept: () -> Unit, onReject: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize(), color = DarkBg.copy(alpha = 0.98f)) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (remoteUid != 0 && call.type == "VIDEO") {
-                AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupRemoteVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, remoteUid)) } }, modifier = Modifier.fillMaxSize())
+fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
+    val context = LocalContext.current
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    val authError by viewModel.authError.collectAsState()
+
+    // CONFIGURACIÓN DE GOOGLE SIGN-IN
+    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestIdToken("913198340441-afbrpdti0apkhqsfhqv56hsb1hv4te0s.apps.googleusercontent.com")
+        .requestEmail()
+        .build()
+    val googleSignInClient = GoogleSignIn.getClient(context, gso)
+
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            account.idToken?.let { viewModel.signInWithGoogle(it, onLoginSuccess) }
+        } catch (e: ApiException) {
+            Log.e("AUTH", "Error Google: ${e.message}")
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(DarkBg)) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Vee", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Si no tienes cuenta, se creará una automáticamente", color = Color.Gray, fontSize = 14.sp, textAlign = TextAlign.Center)
+            
+            if (authError != null) {
+                Text(authError!!, color = Color.Red, modifier = Modifier.padding(vertical = 8.dp))
             }
-            Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Spacer(modifier = Modifier.height(64.dp))
-                    if ((call.status == "ONGOING" || call.status == "CALLING") && call.type == "VIDEO") {
-                        AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupLocalVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, 0)) } }, modifier = Modifier.size(150.dp, 200.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black))
-                    } else {
-                        Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) { Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.Gray) }
-                    }
-                    Spacer(modifier = Modifier.height(24.dp)) ; Text(call.callerName, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) ; Text(text = when(call.status) { "RINGING" -> "Llamada entrante..." ; "CALLING" -> "Llamando..." ; else -> "En llamada activa" }, color = Color.LightGray, fontSize = 18.sp)
-                }
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 64.dp), horizontalArrangement = Arrangement.SpaceEvenly) { if (call.status == "RINGING") { FloatingActionButton(onClick = onAccept, containerColor = Color.Green, contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.Call, null) } } ; FloatingActionButton(onClick = onReject, containerColor = Color.Red, contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.CallEnd, null) } }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth())
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = { viewModel.loginOrRegister(email, password, name, onLoginSuccess) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentColor)
+            ) {
+                Text("Entrar / Registrarse", color = Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("— O —", color = Color.Gray)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // BOTÓN DE GOOGLE
+            OutlinedButton(
+                onClick = { launcher.launch(googleSignInClient.signInIntent) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+            ) {
+                Icon(Icons.Default.AccountCircle, null, Modifier.padding(end = 8.dp))
+                Text("Continuar con Google")
             }
         }
     }
@@ -170,12 +227,15 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel) {
     var searchText by remember { mutableStateOf("") }
     var selectedTab by remember { mutableIntStateOf(0) }
     var isViewingArchived by remember { mutableStateOf(false) }
+    
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showGroupMembersDialog by remember { mutableStateOf<Group?>(null) }
     var userToMenu by remember { mutableStateOf<User?>(null) }
 
-    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) viewModel.uploadProfilePicture(context, uri)
@@ -188,7 +248,7 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
                     Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
-                        if (ownUser?.profilePicUrl != null && ownUser?.profilePicUrl!!.startsWith("data:")) {
+                        if (!ownUser?.profilePicUrl.isNullOrEmpty()) {
                             AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         } else {
                             Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray)
@@ -227,15 +287,14 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel) {
                 } else { Spacer(Modifier.height(16.dp)) }
                 when (selectedTab) {
                     0 -> {
-                        val filteredUsers = users.filter { it.displayName.contains(searchText, ignoreCase = true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) }.sortedByDescending { pinnedUserIds.contains(it.uid) }
+                        val filteredUsers = users.filter { it.displayName.contains(searchText, ignoreCase = true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) }.sortedWith(compareByDescending<User> { pinnedUserIds.contains(it.uid) }.thenByDescending { lastMessages[it.uid]?.timestamp ?: 0L })
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { items(filteredUsers) { user -> val lastMsg = lastMessages[user.uid] ; ChatItem(user = user, subtitle = lastMsg?.content ?: "Sin mensajes", time = if (lastMsg != null) SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(lastMsg.timestamp)) else "", unreadCount = unreadCounts[user.uid] ?: 0, isPinned = pinnedUserIds.contains(user.uid), onClick = { viewModel.selectUser(user) }, onLongClick = { userToMenu = user }) } }
                     }
                     1 -> {
-                        val filteredGroups = groups.filter { it.name.contains(searchText, ignoreCase = true) }
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { items(filteredGroups) { group -> GroupChatItem(group = group, subtitle = "${group.members.size} miembros", time = "", unreadCount = 0, isPinned = false, onClick = { viewModel.selectGroup(group) }, onLongClick = { showGroupMembersDialog = group }) } }
+                        val filteredGroups = groups.filter { it.name.contains(searchText, ignoreCase = true) }.sortedByDescending { lastMessages[it.id]?.timestamp ?: 0L }
+                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { items(filteredGroups) { group -> GroupChatItem(group = group, subtitle = lastMessages[group.id]?.content ?: "${group.members.size} miembros", time = if (lastMessages[group.id] != null) SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(lastMessages[group.id]!!.timestamp)) else "", unreadCount = unreadCounts[group.id] ?: 0, isPinned = false, onClick = { viewModel.selectGroup(group) }, onLongClick = { showGroupMembersDialog = group }) } }
                     }
                     2 -> { LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { items(callLogs) { log -> CallLogItem(log = log) } } }
-                    else -> { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Novedades", color = Color.Gray) } }
                 }
             }
         }
@@ -249,11 +308,29 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel) {
         AlertDialog(onDismissRequest = { showCreateGroupDialog = false }, title = { Text("Crear Nuevo Grupo") }, text = { Column { OutlinedTextField(value = groupName, onValueChange = { groupName = it }, label = { Text("Nombre del grupo") }) ; Spacer(Modifier.height(8.dp)) ; LazyColumn(modifier = Modifier.height(200.dp)) { items(users) { user -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { if (selectedMembers.contains(user.uid)) selectedMembers.remove(user.uid) else selectedMembers.add(user.uid) }.padding(8.dp)) { Checkbox(checked = selectedMembers.contains(user.uid), onCheckedChange = null) ; Text(user.displayName) } } } } }, confirmButton = { Button(onClick = { if (groupName.isNotBlank()) { viewModel.createGroup(groupName, selectedMembers.toList()) ; showCreateGroupDialog = false ; Toast.makeText(context, "Grupo creado", Toast.LENGTH_SHORT).show() } }) { Text("Crear") } })
     }
     if (showSettingsDialog) {
-        AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("Ajustes de Perfil") }, text = { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) { if (ownUser?.profilePicUrl != null) AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.White) } ; Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp)) { Text("Cambiar Foto de Perfil") } } }, confirmButton = { TextButton(onClick = { showSettingsDialog = false }) { Text("Cerrar") } })
+        AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("Ajustes de Perfil") }, text = { Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) { if (!ownUser?.profilePicUrl.isNullOrEmpty()) AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.White) } ; Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp)) { Text("Cambiar Foto de Perfil") } } }, confirmButton = { TextButton(onClick = { showSettingsDialog = false }) { Text("Cerrar") } })
     }
     if (userToMenu != null) {
         val isArchived = archivedUserIds.contains(userToMenu?.uid) ; val isPinned = pinnedUserIds.contains(userToMenu?.uid)
         AlertDialog(onDismissRequest = { userToMenu = null }, confirmButton = { TextButton(onClick = { userToMenu = null }) { Text("Cerrar") } }, title = { Text("Opciones de chat") }, text = { Column { ListItem(headlineContent = { Text(if (isArchived) "Desarchivar" else "Archivar") }, leadingContent = { Icon(Icons.Default.Archive, null) }, modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid) ; userToMenu = null }) ; ListItem(headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar") }, leadingContent = { Icon(Icons.Default.PushPin, null) }, modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid) ; userToMenu = null }) ; ListItem(headlineContent = { Text("Eliminar contenido", color = Color.Red) }, leadingContent = { Icon(Icons.Default.Delete, null, tint = Color.Red) }, modifier = Modifier.clickable { viewModel.clearChat() ; userToMenu = null }) } })
+    }
+}
+
+@Composable
+fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept: () -> Unit, onReject: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize(), color = DarkBg.copy(alpha = 0.98f)) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (remoteUid != 0 && call.type == "VIDEO") { AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupRemoteVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, remoteUid)) } }, modifier = Modifier.fillMaxSize()) }
+            Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(modifier = Modifier.height(64.dp))
+                    if ((call.status == "ONGOING" || call.status == "CALLING") && call.type == "VIDEO") { AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupLocalVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, 0)) } }, modifier = Modifier.size(150.dp, 200.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black)) }
+                    else { Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) { Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.Gray) } }
+                    Spacer(modifier = Modifier.height(24.dp)) ; Text(call.callerName, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) ; Text(text = when(call.status) { "RINGING" -> "Llamada entrante..." ; "CALLING" -> "Llamando..." ; else -> "En llamada activa" }, color = Color.LightGray, fontSize = 18.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 64.dp), horizontalArrangement = Arrangement.SpaceEvenly) { if (call.status == "RINGING") { FloatingActionButton(onClick = onAccept, containerColor = Color.Green, contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.Call, null) } } ; FloatingActionButton(onClick = onReject, containerColor = Color.Red, contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.CallEnd, null) } }
+            }
+        }
     }
 }
 
@@ -265,17 +342,7 @@ fun CallLogItem(log: CallLog) {
             Icon(if (log.isOutgoing) Icons.AutoMirrored.Filled.CallMade else Icons.AutoMirrored.Filled.CallReceived, null, tint = if (log.isOutgoing) Color.Green else Color.Red)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) { Text(log.partnerName, color = Color.White, fontWeight = FontWeight.Bold) ; Text(time, color = Color.Gray, fontSize = 12.sp) }
-            Icon(if (log.type == "VIDEO") Icons.Default.VideoCall else Icons.Default.Call, null, tint = Color.White)
-        }
-    }
-}
-
-@Composable
-fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
-    var email by remember { mutableStateOf("") } ; var password by remember { mutableStateOf("") } ; var name by remember { mutableStateOf("") }
-    Box(modifier = Modifier.fillMaxSize().background(DarkBg)) {
-        Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("Cat-chat 🐱", style = MaterialTheme.typography.headlineLarge, color = Color.White) ; Spacer(modifier = Modifier.height(16.dp)) ; Text("Si no tienes cuenta, se creará una automáticamente", color = Color.Gray, fontSize = 14.sp, textAlign = TextAlign.Center) ; Spacer(modifier = Modifier.height(16.dp)) ; OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth()) ; Spacer(modifier = Modifier.height(8.dp)) ; OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth()) ; Spacer(modifier = Modifier.height(8.dp)) ; OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password", color = Color.Gray) }, textStyle = TextStyle(color = Color.White), modifier = Modifier.fillMaxWidth()) ; Spacer(modifier = Modifier.height(24.dp)) ; Button(onClick = { viewModel.loginOrRegister(email, password, name, onLoginSuccess) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AccentColor)) { Text("Entrar / Registrarse", color = Color.White) }
+            Icon(Icons.Default.Call, null, tint = Color.White)
         }
     }
 }
@@ -285,7 +352,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
 fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = CardBg, shape = RoundedCornerShape(16.dp)) {
         Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) { if (user.profilePicUrl != null && user.profilePicUrl!!.startsWith("data:")) AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray) }
+            Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) { if (!user.profilePicUrl.isNullOrEmpty()) AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray) }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(text = user.displayName.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) ; if (isPinned) { Spacer(Modifier.width(8.dp)) ; Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = Color.LightGray) } } ; Text(text = subtitle, color = Color.LightGray, fontSize = 14.sp, maxLines = 1) }
             Column(horizontalAlignment = Alignment.End) { if (time.isNotEmpty()) { Text(time, color = Color.Gray, fontSize = 12.sp) } ; if (unreadCount > 0) { Spacer(modifier = Modifier.height(4.dp)) ; Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(GreenBadge), contentAlignment = Alignment.Center) { Text(unreadCount.toString(), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) } } }
@@ -309,7 +376,25 @@ fun GroupChatItem(group: Group, subtitle: String, time: String, unreadCount: Int
 @Composable
 fun BottomNavigationBar(selectedItem: Int, onItemSelected: (Int) -> Unit) {
     NavigationBar(containerColor = Color(0xFF0A1D37), tonalElevation = 8.dp) {
-        val items = listOf(Triple("Chats", Icons.AutoMirrored.Filled.Chat, 0), Triple("Grupos", Icons.Default.Groups, 1), Triple("Llamadas", Icons.Default.Call, 2), Triple("Novedades", Icons.Default.Public, 3))
-        items.forEach { (label, icon, index) -> NavigationBarItem(selected = selectedItem == index, onClick = { onItemSelected(index) }, icon = { Icon(icon, contentDescription = label) }, label = { Text(label, fontSize = 10.sp) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Color.White, unselectedIconColor = Color.Gray, selectedTextColor = Color.White, unselectedTextColor = Color.Gray, indicatorColor = AccentColor.copy(alpha = 0.3f))) }
+        val items = listOf(
+            Triple("Chats", Icons.AutoMirrored.Filled.Chat, 0),
+            Triple("Grupos", Icons.Default.Groups, 1),
+            Triple("Llamadas", Icons.Default.Call, 2)
+        )
+        items.forEach { (label, icon, index) -> 
+            NavigationBarItem(
+                selected = selectedItem == index, 
+                onClick = { onItemSelected(index) }, 
+                icon = { Icon(icon, contentDescription = label) }, 
+                label = { Text(label, fontSize = 10.sp) }, 
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Color.White, 
+                    unselectedIconColor = Color.Gray, 
+                    selectedTextColor = Color.White, 
+                    unselectedTextColor = Color.Gray, 
+                    indicatorColor = AccentColor.copy(alpha = 0.3f)
+                )
+            ) 
+        }
     }
 }

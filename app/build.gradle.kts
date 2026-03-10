@@ -69,6 +69,9 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.storage)
 
+    // Google Auth
+    implementation(libs.google.auth)
+
     // Agora SDK para llamadas reales
     implementation(libs.agora.rtc)
     
