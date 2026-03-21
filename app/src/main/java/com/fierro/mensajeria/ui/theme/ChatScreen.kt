@@ -42,13 +42,6 @@ import com.fierro.mensajeria.data.User
 import java.text.SimpleDateFormat
 import java.util.*
 
-// NUEVA PALETA DE COLORES "AURA" (Sincronizada con MainActivity)
-val ChatBackground = Color(0xFF0D0B1F) // Púrpura muy profundo
-val SentBubbleColor = Color(0xFF1C1A2E) // Púrpura oscuro
-val ReceivedBubbleColor = Color(0xFF2D2A4A) // Púrpura medio para contraste
-val AccentColorAura = Color(0xFF8A2BE2) // Violeta eléctrico
-val InputBarColor = Color(0xFF1C1A2E).copy(alpha = 0.8f)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -110,7 +103,7 @@ fun ChatScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(SentBubbleColor),
+                                .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center
                         ) {
                             val profilePic = if (selectedGroup != null) null else selectedUser?.profilePicUrl
@@ -139,7 +132,7 @@ fun ChatScreen(
                             Text(
                                 text = if (selectedGroup != null) "${selectedGroup?.members?.size} miembros" else "En línea",
                                 fontSize = 11.sp,
-                                color = AccentColorAura.copy(alpha = 0.7f)
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                             )
                         }
                     }
@@ -163,32 +156,32 @@ fun ChatScreen(
                         DropdownMenu(
                             expanded = showMenu,
                             onDismissRequest = { showMenu = false },
-                            containerColor = SentBubbleColor
+                            containerColor = MaterialTheme.colorScheme.surface
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Vaciar chat", color = Color.White) },
+                                text = { Text("Vaciar chat", color = MaterialTheme.colorScheme.onSurface) },
                                 onClick = {
                                     viewModel.clearChat()
                                     showMenu = false
                                     Toast.makeText(context, "Chat vaciado", Toast.LENGTH_SHORT).show()
                                 },
-                                leadingIcon = { Icon(Icons.Default.DeleteSweep, null, tint = Color.White) }
+                                leadingIcon = { Icon(Icons.Default.DeleteSweep, null, tint = MaterialTheme.colorScheme.onSurface) }
                             )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = ChatBackground,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         },
-        containerColor = ChatBackground
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize().background(
-            Brush.verticalGradient(listOf(ChatBackground, Color(0xFF1A1635)))
+            Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.surface))
         )) {
             Column(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
@@ -197,7 +190,12 @@ fun ChatScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(messages) { msg ->
+                    items(messages.size) { index ->
+                        val msg = messages[index]
+                        val prevMsg = if (index > 0) messages[index - 1] else null
+                        if (shouldShowDateSeparator(msg.timestamp, prevMsg?.timestamp)) {
+                            DateSeparator(msg.timestamp)
+                        }
                         ChatBubble(message = msg, myId = viewModel.myId)
                     }
                 }
@@ -216,8 +214,8 @@ fun ChatScreen(
                         Surface(
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                             shape = RoundedCornerShape(24.dp),
-                            color = InputBarColor,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -238,8 +236,8 @@ fun ChatScreen(
                                         value = textState,
                                         onValueChange = { textState = it },
                                         modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                                        textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
-                                        cursorBrush = SolidColor(AccentColorAura),
+                                        textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
+                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                         maxLines = 4
                                     )
                                 }
@@ -262,7 +260,7 @@ fun ChatScreen(
                                 }
                             },
                             shape = CircleShape,
-                            containerColor = AccentColorAura,
+                            containerColor = MaterialTheme.colorScheme.primary,
                             contentColor = Color.White,
                             modifier = Modifier.size(48.dp),
                             elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
@@ -282,23 +280,67 @@ fun ChatScreen(
     if (showParticipantsDialog && selectedGroup != null) {
         AlertDialog(
             onDismissRequest = { showParticipantsDialog = false },
-            containerColor = SentBubbleColor,
-            title = { Text("Integrantes", color = Color.White) },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("Integrantes", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     selectedGroup?.members?.forEach { memberId ->
                         val memberName = if (memberId == viewModel.myId) "Tú" 
                                         else users.find { it.uid == memberId }?.displayName ?: "Usuario"
-                        Text("- $memberName", modifier = Modifier.padding(vertical = 4.dp), color = Color.White)
+                        Text("- $memberName", modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showParticipantsDialog = false }) {
-                    Text("Cerrar", color = AccentColorAura)
+                    Text("Cerrar", color = MaterialTheme.colorScheme.primary)
                 }
             }
         )
+    }
+}
+
+fun shouldShowDateSeparator(currentTimestamp: Long, previousTimestamp: Long?): Boolean {
+    if (previousTimestamp == null) return true
+    val cal1 = Calendar.getInstance().apply { timeInMillis = currentTimestamp }
+    val cal2 = Calendar.getInstance().apply { timeInMillis = previousTimestamp }
+    return cal1.get(Calendar.YEAR) != cal2.get(Calendar.YEAR) ||
+           cal1.get(Calendar.DAY_OF_YEAR) != cal2.get(Calendar.DAY_OF_YEAR)
+}
+
+@Composable
+fun DateSeparator(timestamp: Long) {
+    val dateText = remember(timestamp) {
+        val calendar = Calendar.getInstance()
+        val now = Calendar.getInstance()
+        calendar.timeInMillis = timestamp
+        
+        when {
+            calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+            calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR) -> "Hoy"
+            
+            calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+            calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR) - 1 -> "Ayer"
+            
+            else -> SimpleDateFormat("d 'de' MMMM", Locale("es", "ES")).format(Date(timestamp))
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                text = dateText,
+                color = Color.Gray,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
     }
 }
 
@@ -306,8 +348,8 @@ fun ChatScreen(
 fun ChatBubble(message: FirebaseMessage, myId: String) {
     val isMe = message.senderId == myId
     val alignment = if (isMe) Alignment.End else Alignment.Start
-    val bubbleColor = if (isMe) AccentColorAura.copy(alpha = 0.2f) else SentBubbleColor
-    val borderColor = if (isMe) AccentColorAura.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f)
+    val bubbleColor = if (isMe) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
+    val borderColor = if (isMe) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
     
     val time = remember(message.timestamp) {
         val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
@@ -320,7 +362,7 @@ fun ChatBubble(message: FirebaseMessage, myId: String) {
         RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
     }
 
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalAlignment = alignment) {
         Surface(
             color = bubbleColor, 
             shape = shape,
@@ -330,20 +372,20 @@ fun ChatBubble(message: FirebaseMessage, myId: String) {
                 when (message.content) {
                     "📷 FOTO_MSG" -> {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.PhotoCamera, null, Modifier.size(80.dp), tint = Color.White.copy(alpha = 0.5f))
-                            Text("Foto enviada", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.PhotoCamera, null, Modifier.size(80.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                            Text("Foto enviada", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                         }
                     }
                     "🎤 AUDIO_MSG" -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                            Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurface)
                             Spacer(Modifier.width(8.dp))
-                            repeat(10) { Box(Modifier.width(2.dp).height((10..25).random().dp).background(Color.White.copy(alpha = 0.3f))) ; Spacer(Modifier.width(2.dp)) }
+                            repeat(10) { Box(Modifier.width(2.dp).height((10..25).random().dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))) ; Spacer(Modifier.width(2.dp)) }
                         }
                     }
-                    else -> { Text(text = message.content, color = Color.White, fontSize = 15.sp) }
+                    else -> { Text(text = message.content, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp) }
                 }
-                Text(text = time, color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 4.dp))
+                Text(text = time, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 4.dp))
             }
         }
     }

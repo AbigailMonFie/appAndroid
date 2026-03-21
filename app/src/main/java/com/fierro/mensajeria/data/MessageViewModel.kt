@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
@@ -27,6 +28,8 @@ class MessageViewModel : ViewModel() {
     private val usersCollection = db.collection("users")
     private val groupsCollection = db.collection("groups")
     private val callsCollection = db.collection("calls")
+
+    private val activeListeners = mutableListOf<ListenerRegistration>()
 
     val myId: String get() = auth.currentUser?.uid ?: "anonimo"
 
@@ -70,7 +73,25 @@ class MessageViewModel : ViewModel() {
     }
 
     fun onUserAuthenticated() {
+        clearData() 
         loadInitialData()
+    }
+
+    fun clearData() {
+        activeListeners.forEach { it.remove() }
+        activeListeners.clear()
+        
+        _ownUser.value = null
+        _users.value = emptyList()
+        _groups.value = emptyList()
+        _selectedUser.value = null
+        _selectedGroup.value = null
+        _currentCall.value = null
+        _archivedUserIds.value = emptySet()
+        _pinnedUserIds.value = emptySet()
+        _lastMessages.value = emptyMap()
+        _unreadCounts.value = emptyMap()
+        _callLogs.value = emptyList()
     }
 
     private fun loadInitialData() {
@@ -86,32 +107,43 @@ class MessageViewModel : ViewModel() {
 
     private fun fetchOwnProfile() {
         if (myId == "anonimo") return
-        usersCollection.document(myId).addSnapshotListener { snapshot, _ ->
+        val listener = usersCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 _ownUser.value = snapshot.toObject(User::class.java)
             }
         }
+        activeListeners.add(listener)
     }
 
     private fun listenForLastMessages() {
         if (myId == "anonimo") return
-        messagesCollection.orderBy("timestamp", Query.Direction.DESCENDING)
+        
+        val listener = messagesCollection.orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(100) 
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     val allMessages = snapshot.toObjects(FirebaseMessage::class.java)
-                    val myMessages = allMessages.filter { it.senderId == myId || it.receiverId == myId }
                     val lastMsgsMap = mutableMapOf<String, FirebaseMessage>()
                     val unreadCountsMap = mutableMapOf<String, Int>()
                     
-                    myMessages.forEach { msg ->
-                        val partnerId = if (msg.senderId == myId) msg.receiverId else msg.senderId
-                        if (!lastMsgsMap.containsKey(partnerId)) {
-                            lastMsgsMap[partnerId] = msg
-                        }
-                        if (msg.receiverId == myId) {
-                            val currentOpenChatId = _selectedUser.value?.uid ?: _selectedGroup.value?.id
-                            if (partnerId != currentOpenChatId) {
-                                unreadCountsMap[partnerId] = (unreadCountsMap[partnerId] ?: 0) + 1
+                    val myGroupIds = _groups.value.map { it.id }
+                    
+                    allMessages.forEach { msg ->
+                        val isGroupMsg = myGroupIds.contains(msg.receiverId)
+                        val isDirectMsg = msg.senderId == myId || msg.receiverId == myId
+                        
+                        if (isGroupMsg || isDirectMsg) {
+                            val chatKey = if (isGroupMsg) msg.receiverId else (if (msg.senderId == myId) msg.receiverId else msg.senderId)
+                            
+                            if (!lastMsgsMap.containsKey(chatKey)) {
+                                lastMsgsMap[chatKey] = msg
+                            }
+                            
+                            if (msg.senderId != myId && !msg.read) {
+                                val currentOpenChatId = _selectedUser.value?.uid ?: _selectedGroup.value?.id
+                                if (chatKey != currentOpenChatId) {
+                                    unreadCountsMap[chatKey] = (unreadCountsMap[chatKey] ?: 0) + 1
+                                }
                             }
                         }
                     }
@@ -119,37 +151,78 @@ class MessageViewModel : ViewModel() {
                     _unreadCounts.value = unreadCountsMap
                 }
             }
+        activeListeners.add(listener)
+    }
+
+    fun markMessagesAsRead(chatId: String, isGroup: Boolean) {
+        val currentUserId = myId
+        if (currentUserId == "anonimo") return
+
+        // Simplificamos la query para evitar problemas de índices y asegurar que encuentre los mensajes
+        val query = if (isGroup) {
+            messagesCollection
+                .whereEqualTo("receiverId", chatId)
+        } else {
+            messagesCollection
+                .whereEqualTo("senderId", chatId)
+                .whereEqualTo("receiverId", currentUserId)
+        }
+
+        query.get().addOnSuccessListener { documents ->
+            if (documents != null && !documents.isEmpty) {
+                val batch = db.batch()
+                var updated = false
+                for (document in documents) {
+                    val msg = document.toObject(FirebaseMessage::class.java)
+                    // Filtramos manualmente aquí para estar 100% seguros y no depender de índices complejos
+                    if (!msg.read && msg.senderId != currentUserId) {
+                        batch.update(document.reference, "read", true)
+                        updated = true
+                    }
+                }
+                if (updated) {
+                    batch.commit().addOnFailureListener { e ->
+                        Log.e("FIRESTORE", "Error al confirmar batch read: ${e.message}")
+                    }
+                }
+            }
+        }.addOnFailureListener { e ->
+            Log.e("FIRESTORE", "Error al obtener mensajes para marcar: ${e.message}")
+        }
     }
 
     private fun listenForArchivedChats() {
         if (myId == "anonimo") return
-        db.collection("users").document(myId).collection("archived")
+        val listener = db.collection("users").document(myId).collection("archived")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     _archivedUserIds.value = snapshot.documents.map { it.id }.toSet()
                 }
             }
+        activeListeners.add(listener)
     }
 
     private fun listenForPinnedChats() {
         if (myId == "anonimo") return
-        db.collection("users").document(myId).collection("pinned")
+        val listener = db.collection("users").document(myId).collection("pinned")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     _pinnedUserIds.value = snapshot.documents.map { it.id }.toSet()
                 }
             }
+        activeListeners.add(listener)
     }
 
     private fun listenForCallLogs() {
         if (myId == "anonimo") return
-        db.collection("users").document(myId).collection("calls")
+        val listener = db.collection("users").document(myId).collection("calls")
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     _callLogs.value = snapshot.toObjects(CallLog::class.java)
                 }
             }
+        activeListeners.add(listener)
     }
 
     private fun addCallToLog(log: CallLog) {
@@ -187,26 +260,28 @@ class MessageViewModel : ViewModel() {
     }
 
     private fun fetchUsers() {
-        usersCollection.addSnapshotListener { snapshot, _ ->
+        val listener = usersCollection.addSnapshotListener { snapshot, _ ->
             if (snapshot != null) {
                 _users.value = snapshot.toObjects(User::class.java).filter { it.uid != myId }
             }
         }
+        activeListeners.add(listener)
     }
 
     private fun fetchGroups() {
         if (myId == "anonimo") return
-        groupsCollection.whereArrayContains("members", myId)
+        val listener = groupsCollection.whereArrayContains("members", myId)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     _groups.value = snapshot.toObjects(Group::class.java)
                 }
             }
+        activeListeners.add(listener)
     }
 
     private fun listenForCalls() {
         if (myId == "anonimo") return
-        callsCollection.document(myId).addSnapshotListener { snapshot, _ ->
+        val listener = callsCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 val call = snapshot.toObject(CallInfo::class.java)
                 if (call?.status == "RINGING") {
@@ -215,12 +290,13 @@ class MessageViewModel : ViewModel() {
                 }
             }
         }
+        activeListeners.add(listener)
     }
 
     fun startCall(type: String) {
         val targetId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val targetName = _selectedGroup.value?.name ?: _selectedUser.value?.displayName ?: "Chat"
-        val call = CallInfo(myId, auth.currentUser?.displayName ?: "Alguien", targetId, type, "RINGING")
+        val call = CallInfo(myId, ownUser.value?.displayName ?: "Alguien", targetId, type, "RINGING")
         if (_selectedGroup.value != null) {
             _selectedGroup.value?.members?.forEach { if (it != myId) callsCollection.document(it).set(call) }
         } else {
@@ -247,6 +323,8 @@ class MessageViewModel : ViewModel() {
     fun selectUser(user: User) {
         _selectedGroup.value = null
         _selectedUser.value = user
+        markMessagesAsRead(user.uid, false)
+
         val newMap = _unreadCounts.value.toMutableMap()
         newMap.remove(user.uid)
         _unreadCounts.value = newMap
@@ -255,6 +333,8 @@ class MessageViewModel : ViewModel() {
     fun selectGroup(group: Group) {
         _selectedUser.value = null
         _selectedGroup.value = group
+        markMessagesAsRead(group.id, true)
+
         val newMap = _unreadCounts.value.toMutableMap()
         newMap.remove(group.id)
         _unreadCounts.value = newMap
@@ -284,15 +364,21 @@ class MessageViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val query = if (group != null) messagesCollection.whereEqualTo("receiverId", group.id)
-                else if (user != null) messagesCollection.whereIn("senderId", listOf(myId, user.uid))
+                else if (user != null) messagesCollection.whereIn("receiverId", listOf(myId, user.uid))
                 else return@launch
+                
                 val snapshot = query.get().await()
                 db.runBatch { batch ->
                     snapshot.documents.forEach { doc ->
-                        if (group != null) batch.delete(doc.reference)
-                        else if (user != null) {
-                            val msg = doc.toObject(FirebaseMessage::class.java)
-                            if (msg != null && ((msg.senderId == myId && msg.receiverId == user.uid) || (msg.senderId == user.uid && msg.receiverId == myId))) batch.delete(doc.reference)
+                        val msg = doc.toObject(FirebaseMessage::class.java)
+                        if (msg != null) {
+                            if (group != null) {
+                                batch.delete(doc.reference)
+                            } else if (user != null) {
+                                if ((msg.senderId == myId && msg.receiverId == user.uid) || (msg.senderId == user.uid && msg.receiverId == myId)) {
+                                    batch.delete(doc.reference)
+                                }
+                            }
                         }
                     }
                 }.await()
@@ -305,12 +391,35 @@ class MessageViewModel : ViewModel() {
         .flatMapLatest { (user, group) ->
             if (user == null && group == null) return@flatMapLatest flowOf(emptyList())
             callbackFlow {
-                val subscription = messagesCollection.addSnapshotListener { snapshot, _ ->
+                val query = if (group != null) {
+                    messagesCollection.whereEqualTo("receiverId", group.id)
+                } else {
+                    messagesCollection.whereIn("receiverId", listOf(myId, user!!.uid))
+                }
+
+                val subscription = query.addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
                         val allMsgs = snapshot.toObjects(FirebaseMessage::class.java)
-                        val filtered = if (group != null) allMsgs.filter { it.receiverId == group.id }
-                        else allMsgs.filter { (it.senderId == myId && it.receiverId == user!!.uid) || (it.senderId == user!!.uid && it.receiverId == myId) }
-                        trySend(filtered.sortedBy { it.timestamp })
+                        val filtered = if (group != null) {
+                            allMsgs
+                        } else {
+                            allMsgs.filter { 
+                                (it.senderId == myId && it.receiverId == user!!.uid) || 
+                                (it.senderId == user!!.uid && it.receiverId == myId) 
+                            }
+                        }
+                        val sorted = filtered.sortedBy { it.timestamp }
+                        
+                        // Si el chat está abierto, detectamos si hay mensajes que NO son míos y están sin leer
+                        val chatId = group?.id ?: user?.uid
+                        if (chatId != null) {
+                            val hasUnreadFromOthers = sorted.any { it.senderId != myId && !it.read }
+                            if (hasUnreadFromOthers) {
+                                markMessagesAsRead(chatId, group != null)
+                            }
+                        }
+                        
+                        trySend(sorted)
                     }
                 }
                 awaitClose { subscription.remove() }
@@ -319,8 +428,27 @@ class MessageViewModel : ViewModel() {
 
     fun sendMessage(content: String) {
         val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+        val currentUserId = myId
+
         viewModelScope.launch {
-            messagesCollection.add(FirebaseMessage(myId, receiverId, content, System.currentTimeMillis()))
+            val messageData = hashMapOf(
+                "senderId" to currentUserId,
+                "receiverId" to receiverId,
+                "content" to content,
+                "timestamp" to System.currentTimeMillis(),
+                "read" to false
+            )
+
+            messagesCollection.add(messageData)
+                .addOnFailureListener { e ->
+                    Log.e("FIRESTORE", "Error al enviar mensaje: ${e.message}")
+                }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        activeListeners.forEach { it.remove() }
+        activeListeners.clear()
     }
 }

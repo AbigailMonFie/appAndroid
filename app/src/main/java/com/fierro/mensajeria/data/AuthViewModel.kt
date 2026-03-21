@@ -4,7 +4,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -18,52 +20,55 @@ class AuthViewModel : ViewModel() {
     private val _authError = MutableStateFlow<String?>(null)
     val authError = _authError.asStateFlow()
 
-    fun loginOrRegister(email: String, password: String, name: String, onSuccess: () -> Unit) {
+    fun login(email: String, password: String, onSuccess: () -> Unit) {
         _authError.value = null
-        
         if (email.isBlank() || password.isBlank()) {
-            _authError.value = "Por favor, completa todos los campos"
+            _authError.value = "Completa todos los campos"
             return
         }
 
         auth.signInWithEmailAndPassword(email, password)
             .addOnSuccessListener {
                 _currentUser.value = auth.currentUser
+                updateFcmToken()
                 onSuccess()
             }
-            .addOnFailureListener { loginError ->
-                if (loginError.message?.contains("no user", ignoreCase = true) == true || 
-                    loginError.message?.contains("record", ignoreCase = true) == true) {
-                    
-                    if (name.isBlank()) {
-                        _authError.value = "Ingresa un nombre para registrarte"
-                        return@addOnFailureListener
-                    }
-
-                    auth.createUserWithEmailAndPassword(email, password)
-                        .addOnSuccessListener { res ->
-                            val user = User(res.user!!.uid, email, name)
-                            
-                            // Enviar correo de verificación
-                            res.user?.sendEmailVerification()
-                                ?.addOnCompleteListener { task ->
-                                    if (task.isSuccessful) {
-                                        Log.d("AUTH", "Correo de verificación enviado")
-                                    }
-                                }
-
-                            db.collection("users").document(user.uid).set(user)
-                                .addOnSuccessListener {
-                                    _currentUser.value = auth.currentUser
-                                    onSuccess()
-                                }
-                        }
-                        .addOnFailureListener { regError ->
-                            _authError.value = "Error al registrar: ${regError.localizedMessage}"
-                        }
-                } else {
-                    _authError.value = "Credenciales incorrectas o error de red"
+            .addOnFailureListener { e ->
+                val errorCode = (e as? FirebaseAuthException)?.errorCode
+                _authError.value = when(errorCode) {
+                    "ERROR_WRONG_PASSWORD" -> "Contraseña incorrecta"
+                    "ERROR_USER_NOT_FOUND", "INVALID_LOGIN_CREDENTIALS" -> "Usuario no encontrado o credenciales inválidas"
+                    "ERROR_INVALID_EMAIL" -> "Email inválido"
+                    else -> e.localizedMessage
                 }
+            }
+    }
+
+    fun register(email: String, password: String, name: String, onSuccess: () -> Unit) {
+        _authError.value = null
+        if (email.isBlank() || password.isBlank() || name.isBlank()) {
+            _authError.value = "Completa todos los campos"
+            return
+        }
+        if (password.length < 6) {
+            _authError.value = "La contraseña debe tener al menos 6 caracteres"
+            return
+        }
+
+        auth.createUserWithEmailAndPassword(email, password)
+            .addOnSuccessListener { res ->
+                val user = User(res.user!!.uid, email, name)
+                db.collection("users").document(user.uid).set(user)
+                    .addOnSuccessListener {
+                        _currentUser.value = auth.currentUser
+                        updateFcmToken()
+                        onSuccess()
+                    }
+            }
+            .addOnFailureListener { e ->
+                val errorCode = (e as? FirebaseAuthException)?.errorCode
+                _authError.value = if (errorCode == "ERROR_EMAIL_ALREADY_IN_USE") "Este email ya está registrado" 
+                                 else e.localizedMessage
             }
     }
 
@@ -73,11 +78,9 @@ class AuthViewModel : ViewModel() {
             .addOnSuccessListener { res ->
                 val firebaseUser = res.user
                 if (firebaseUser != null) {
-                    // Verificar si el usuario ya existe en Firestore
                     db.collection("users").document(firebaseUser.uid).get()
                         .addOnSuccessListener { document ->
                             if (!document.exists()) {
-                                // Crear nuevo usuario automáticamente si no existe
                                 val newUser = User(
                                     uid = firebaseUser.uid,
                                     email = firebaseUser.email ?: "",
@@ -87,26 +90,37 @@ class AuthViewModel : ViewModel() {
                                 db.collection("users").document(firebaseUser.uid).set(newUser)
                                     .addOnSuccessListener {
                                         _currentUser.value = firebaseUser
+                                        updateFcmToken()
                                         onSuccess()
                                     }
                             } else {
                                 _currentUser.value = firebaseUser
+                                updateFcmToken()
                                 onSuccess()
                             }
                         }
                 }
             }
-            .addOnFailureListener { e ->
-                _authError.value = "Error con Google: ${e.localizedMessage}"
-            }
+            .addOnFailureListener { e -> _authError.value = "Error con Google: ${e.localizedMessage}" }
     }
 
-    fun clearError() {
-        _authError.value = null
+    fun updateFcmToken() {
+        val uid = auth.currentUser?.uid ?: return
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                val token = task.result
+                db.collection("users").document(uid).update("fcmToken", token)
+            }
+        }
     }
+
+    fun clearError() { _authError.value = null }
 
     fun logout() {
+        val uid = auth.currentUser?.uid
+        if (uid != null) db.collection("users").document(uid).update("fcmToken", null)
         auth.signOut()
         _currentUser.value = null
+        _authError.value = null
     }
 }

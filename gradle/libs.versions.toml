@@ -12,7 +12,7 @@ room = "2.6.1"
 ksp = "2.3.2"
 googleServices = "4.4.2"
 firebaseBom = "33.9.0"
-agora = "4.3.0"
+agora = "4.6.3"
 google-auth = "21.2.0"
 
 [libraries]
@@ -39,6 +39,7 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 google-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "google-auth" }
 agora-rtc = { group = "io.agora.rtc", name = "full-sdk", version.ref = "agora" }
 

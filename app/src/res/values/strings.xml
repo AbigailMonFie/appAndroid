@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Vee</string>
+    <!-- ID de cliente web extraído de tu configuración -->
     <string name="default_web_client_id">913198340441-afbrpdti0apkhqsfhqv56hsb1hv4te0s.apps.googleusercontent.com</string>
 </resources>

@@ -17,11 +17,6 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        
-        ndk {
-            abiFilters.clear()
-            abiFilters.add("arm64-v8a")
-        }
     }
 
     buildTypes {
@@ -43,7 +38,6 @@ android {
     buildFeatures {
         compose = true
     }
-    
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -68,6 +62,7 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.storage)
+    implementation(libs.firebase.messaging)
 
     // Google Auth
     implementation(libs.google.auth)
