@@ -52,7 +52,6 @@ fun ChatScreen(
     val selectedUser by viewModel.selectedUser.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
     val users by viewModel.users.collectAsState()
-    val ownUser by viewModel.ownUser.collectAsState()
     
     var textState by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -83,13 +82,23 @@ fun ChatScreen(
         }
     }
 
+    // Scroll al final cuando hay nuevos mensajes
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
     }
 
+    // Detectar teclado y hacer scroll al final
+    val isKeyboardVisible = WindowInsets.ime.asPaddingValues().calculateBottomPadding() > 0.dp
+    LaunchedEffect(isKeyboardVisible) {
+        if (isKeyboardVisible && messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -178,99 +187,101 @@ fun ChatScreen(
                 )
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize().background(
-            Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.surface))
-        )) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(messages.size) { index ->
-                        val msg = messages[index]
-                        val prevMsg = if (index > 0) messages[index - 1] else null
-                        if (shouldShowDateSeparator(msg.timestamp, prevMsg?.timestamp)) {
-                            DateSeparator(msg.timestamp)
-                        }
-                        ChatBubble(message = msg, myId = viewModel.myId)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())
+                .background(
+                    Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.surface))
+                )
+                .navigationBarsPadding()
+                .imePadding()
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(messages.size) { index ->
+                    val msg = messages[index]
+                    val prevMsg = if (index > 0) messages[index - 1] else null
+                    if (shouldShowDateSeparator(msg.timestamp, prevMsg?.timestamp)) {
+                        DateSeparator(msg.timestamp)
                     }
+                    ChatBubble(message = msg, myId = viewModel.myId)
                 }
+            }
 
-                Surface(
-                    color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            Surface(
+                color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .navigationBarsPadding()
-                            .imePadding(),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     ) {
-                        Surface(
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(24.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            IconButton(onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA)) }) {
+                                Icon(Icons.Default.PhotoCamera, null, tint = Color.Gray)
+                            }
+                            
+                            Box(
+                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.CenterStart
                             ) {
-                                IconButton(onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA)) }) {
-                                    Icon(Icons.Default.PhotoCamera, null, tint = Color.Gray)
+                                if (textState.isEmpty()) {
+                                    Text("Mensaje...", color = Color.Gray, fontSize = 16.sp)
                                 }
-                                
-                                Box(
-                                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    if (textState.isEmpty()) {
-                                        Text("Mensaje...", color = Color.Gray, fontSize = 16.sp)
-                                    }
-                                    BasicTextField(
-                                        value = textState,
-                                        onValueChange = { textState = it },
-                                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                                        textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
-                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                        maxLines = 4
-                                    )
-                                }
+                                BasicTextField(
+                                    value = textState,
+                                    onValueChange = { textState = it },
+                                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                                    textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    maxLines = 4
+                                )
+                            }
 
-                                IconButton(onClick = { /* Emoji picker */ }) {
-                                    Icon(Icons.Default.SentimentSatisfiedAlt, null, tint = Color.Gray)
-                                }
+                            IconButton(onClick = { /* Emoji picker */ }) {
+                                Icon(Icons.Default.SentimentSatisfiedAlt, null, tint = Color.Gray)
                             }
                         }
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                        FloatingActionButton(
-                            onClick = {
-                                if (textState.isNotBlank()) {
-                                    viewModel.sendMessage(textState)
-                                    textState = ""
-                                } else {
-                                    permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
-                                }
-                            },
-                            shape = CircleShape,
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = Color.White,
-                            modifier = Modifier.size(48.dp),
-                            elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
-                        ) {
-                            Icon(
-                                if (textState.isNotBlank()) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
-                                null,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    FloatingActionButton(
+                        onClick = {
+                            if (textState.isNotBlank()) {
+                                viewModel.sendMessage(textState)
+                                textState = ""
+                            } else {
+                                permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                            }
+                        },
+                        shape = CircleShape,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White,
+                        modifier = Modifier.size(48.dp),
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            if (textState.isNotBlank()) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
+                            null,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                 }
             }
