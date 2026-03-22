@@ -35,10 +35,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import coil.compose.SubcomposeAsyncImage
 import com.fierro.mensajeria.data.FirebaseMessage
 import com.fierro.mensajeria.data.MessageViewModel
-import com.fierro.mensajeria.data.User
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -59,16 +60,19 @@ fun ChatScreen(
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     var showParticipantsDialog by remember { mutableStateOf(false) }
+    
+    var enlargedImageUrl by remember { mutableStateOf<String?>(null) }
 
     BackHandler {
         viewModel.deselectUser()
     }
 
+    // Volvemos a la versión estable de miniatura
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
-            viewModel.sendMessage("📷 FOTO_MSG")
+            viewModel.sendImageMessage(bitmap)
         }
     }
 
@@ -82,14 +86,12 @@ fun ChatScreen(
         }
     }
 
-    // Scroll al final cuando hay nuevos mensajes
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
     }
 
-    // Detectar teclado y hacer scroll al final
     val isKeyboardVisible = WindowInsets.ime.asPaddingValues().calculateBottomPadding() > 0.dp
     LaunchedEffect(isKeyboardVisible) {
         if (isKeyboardVisible && messages.isNotEmpty()) {
@@ -117,7 +119,7 @@ fun ChatScreen(
                         ) {
                             val profilePic = if (selectedGroup != null) null else selectedUser?.profilePicUrl
                             if (profilePic != null) {
-                                AsyncImage(
+                                SubcomposeAsyncImage(
                                     model = profilePic,
                                     contentDescription = null,
                                     contentScale = ContentScale.Crop,
@@ -172,7 +174,6 @@ fun ChatScreen(
                                 onClick = {
                                     viewModel.clearChat()
                                     showMenu = false
-                                    Toast.makeText(context, "Chat vaciado", Toast.LENGTH_SHORT).show()
                                 },
                                 leadingIcon = { Icon(Icons.Default.DeleteSweep, null, tint = MaterialTheme.colorScheme.onSurface) }
                             )
@@ -212,7 +213,11 @@ fun ChatScreen(
                     if (shouldShowDateSeparator(msg.timestamp, prevMsg?.timestamp)) {
                         DateSeparator(msg.timestamp)
                     }
-                    ChatBubble(message = msg, myId = viewModel.myId)
+                    ChatBubble(
+                        message = msg, 
+                        myId = viewModel.myId,
+                        onImageClick = { url -> enlargedImageUrl = url }
+                    )
                 }
             }
 
@@ -288,6 +293,34 @@ fun ChatScreen(
         }
     }
 
+    if (enlargedImageUrl != null) {
+        Dialog(
+            onDismissRequest = { enlargedImageUrl = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { enlargedImageUrl = null },
+                contentAlignment = Alignment.Center
+            ) {
+                SubcomposeAsyncImage(
+                    model = enlargedImageUrl,
+                    contentDescription = "Imagen ampliada",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+                IconButton(
+                    onClick = { enlargedImageUrl = null },
+                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+                ) {
+                    Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+            }
+        }
+    }
+
     if (showParticipantsDialog && selectedGroup != null) {
         AlertDialog(
             onDismissRequest = { showParticipantsDialog = false },
@@ -356,7 +389,11 @@ fun DateSeparator(timestamp: Long) {
 }
 
 @Composable
-fun ChatBubble(message: FirebaseMessage, myId: String) {
+fun ChatBubble(
+    message: FirebaseMessage, 
+    myId: String,
+    onImageClick: (String) -> Unit = {}
+) {
     val isMe = message.senderId == myId
     val alignment = if (isMe) Alignment.End else Alignment.Start
     val bubbleColor = if (isMe) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
@@ -380,21 +417,42 @@ fun ChatBubble(message: FirebaseMessage, myId: String) {
             border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                when (message.content) {
-                    "📷 FOTO_MSG" -> {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.PhotoCamera, null, Modifier.size(80.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                            Text("Foto enviada", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
-                        }
+                if (message.content.startsWith("📷 FOTO_MSG:")) {
+                    val imageUrl = message.content.removePrefix("📷 FOTO_MSG:")
+                    
+                    Box(modifier = Modifier
+                        .width(240.dp)
+                        .height(320.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Gray.copy(alpha = 0.1f))
+                        .clickable { onImageClick(imageUrl) }
+                    ) {
+                        SubcomposeAsyncImage(
+                            model = imageUrl,
+                            contentDescription = "Imagen de chat",
+                            loading = {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                                }
+                            },
+                            error = {
+                                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                    Icon(Icons.Default.BrokenImage, null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                                    Text("Error al cargar", color = Color.Gray, fontSize = 10.sp)
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
                     }
-                    "🎤 AUDIO_MSG" -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.width(8.dp))
-                            repeat(10) { Box(Modifier.width(2.dp).height((10..25).random().dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))) ; Spacer(Modifier.width(2.dp)) }
-                        }
+                } else if (message.content == "🎤 AUDIO_MSG") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurface)
+                        Spacer(Modifier.width(8.dp))
+                        repeat(10) { Box(Modifier.width(2.dp).height((10..25).random().dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))) ; Spacer(Modifier.width(2.dp)) }
                     }
-                    else -> { Text(text = message.content, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp) }
+                } else {
+                    Text(text = message.content, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
                 }
                 Text(text = time, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 4.dp))
             }

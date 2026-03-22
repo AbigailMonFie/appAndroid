@@ -1,6 +1,7 @@
 package com.fierro.mensajeria.data
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -15,13 +16,14 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 class MessageViewModel : ViewModel() {
 
     private val db = FirebaseFirestore.getInstance()
     private val auth = FirebaseAuth.getInstance()
-    private val storage = FirebaseStorage.getInstance() // Referencia a Firebase Storage (Bucket)
+    private val storage = FirebaseStorage.getInstance()
     
     private val messagesCollection = db.collection("messages")
     private val usersCollection = db.collection("users")
@@ -242,30 +244,81 @@ class MessageViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Sube la imagen a Firebase Storage (Bucket de Google Cloud)
-     * y guarda la URL pública en el perfil del usuario en Firestore.
-     */
     fun uploadProfilePicture(context: Context, uri: Uri) {
         if (myId == "anonimo") return
+        viewModelScope.launch {
+            try {
+                Log.d("STORAGE", "Iniciando subida de foto de perfil...")
+                val fileRef = storage.reference.child("profile_pics/$myId.jpg")
+                fileRef.putFile(uri).await()
+                val downloadUrl = fileRef.downloadUrl.await()
+                usersCollection.document(myId).update("profilePicUrl", downloadUrl.toString()).await()
+                Log.d("STORAGE", "Foto de perfil actualizada: $downloadUrl")
+            } catch (e: Exception) { Log.e("STORAGE", "Error en perfil: ${e.message}") }
+        }
+    }
+
+    /**
+     * Sube una foto en alta resolución desde un URI (archivo real)
+     */
+    fun sendImageMessageFromUri(context: Context, uri: Uri) {
+        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+        val messageId = UUID.randomUUID().toString()
         
         viewModelScope.launch {
             try {
-                // 1. Crear referencia en el Bucket (ejemplo: profile_pics/USER_ID.jpg)
-                val fileRef = storage.reference.child("profile_pics/$myId.jpg")
+                Log.d("STORAGE", "Subiendo imagen HD al Bucket...")
+                val imageRef = storage.reference.child("chat_images/$messageId.jpg")
                 
-                // 2. Subir el archivo directamente desde el URI
-                val uploadTask = fileRef.putFile(uri).await()
+                // Subimos el archivo original directamente para máxima calidad
+                imageRef.putFile(uri).await()
                 
-                // 3. Obtener la URL de descarga pública
-                val downloadUrl = fileRef.downloadUrl.await()
+                val imageUrl = imageRef.downloadUrl.await().toString()
                 
-                // 4. Actualizar Firestore con la nueva URL (ya no Base64)
-                usersCollection.document(myId).update("profilePicUrl", downloadUrl.toString())
+                val messageData = hashMapOf(
+                    "senderId" to myId,
+                    "receiverId" to receiverId,
+                    "content" to "📷 FOTO_MSG:$imageUrl",
+                    "timestamp" to System.currentTimeMillis(),
+                    "read" to false
+                )
+                messagesCollection.add(messageData).await()
+                Log.d("STORAGE", "Imagen HD enviada con éxito")
                 
-                Log.d("STORAGE", "Foto subida con éxito: $downloadUrl")
-            } catch (e: Exception) { 
-                Log.e("STORAGE", "Error al subir foto a Storage: ${e.message}") 
+            } catch (e: Exception) {
+                Log.e("STORAGE", "Error al enviar imagen HD: ${e.message}")
+            }
+        }
+    }
+
+    fun sendImageMessage(bitmap: Bitmap) {
+        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+        val messageId = UUID.randomUUID().toString()
+        
+        viewModelScope.launch {
+            try {
+                Log.d("STORAGE", "Iniciando subida de imagen de chat...")
+                val baos = ByteArrayOutputStream()
+                // Calidad al 100% para evitar pérdida
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, baos)
+                val data = baos.toByteArray()
+
+                val imageRef = storage.reference.child("chat_images/$messageId.jpg")
+                imageRef.putBytes(data).await()
+                
+                val imageUrl = imageRef.downloadUrl.await().toString()
+
+                val messageData = hashMapOf(
+                    "senderId" to myId,
+                    "receiverId" to receiverId,
+                    "content" to "📷 FOTO_MSG:$imageUrl",
+                    "timestamp" to System.currentTimeMillis(),
+                    "read" to false
+                )
+                messagesCollection.add(messageData).await()
+                
+            } catch (e: Exception) {
+                Log.e("STORAGE", "Error al enviar imagen: ${e.message}")
             }
         }
     }
