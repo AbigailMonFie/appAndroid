@@ -22,6 +22,16 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Mensajeria"
         tools:targetApi="31">
+
+        <!-- Icono por defecto para notificaciones push -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/vee" />
+        <!-- Canal por defecto para que las notificaciones aparezcan como alertas -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="chat_messages" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
