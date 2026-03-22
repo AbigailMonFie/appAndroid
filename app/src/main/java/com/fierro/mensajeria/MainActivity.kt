@@ -30,10 +30,13 @@ import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -101,7 +104,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                Box(modifier = Modifier.fillMaxSize().background(colorScheme.background)) {
                     if (currentUser == null) {
                         LoginScreen(
                             onLoginSuccess = { chatViewModel.onUserAuthenticated() }, 
@@ -191,24 +194,51 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
         }
     }
 
+    val primaryColor = colorScheme.primary
+    val backgroundColor = colorScheme.background
+    val surfaceColor = colorScheme.surface
+
     Box(modifier = Modifier.fillMaxSize().background(
-        Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.surface))
+        Brush.verticalGradient(listOf(backgroundColor, surfaceColor))
     )) {
         Column(
             modifier = Modifier.fillMaxSize().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.vee),
-                contentDescription = "Logo",
-                modifier = Modifier.size(120.dp),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+            // Contenedor del Logo con degradado radial ( Glow effect )
+            // Ajustado para que el resplandor salga del primer tercio inferior
+            Box(
+                modifier = Modifier
+                    .size(150.dp)
+                    .drawBehind {
+                        val glowColor = primaryColor.copy(alpha = 0.4f)
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(glowColor, Color.Transparent),
+                                center = Offset(size.width / 2f, size.height * 0.75f), // Centro en el tercio inferior
+                                radius = size.width * 0.8f
+                            )
+                        )
+                    }
+                    .clip(CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.vee),
+                    contentDescription = "Logo",
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape) // Lo hace redondo
+                        .border(1.dp, primaryColor.copy(alpha = 0.2f), CircleShape), // Borde sutil
+                    contentScale = ContentScale.Fit
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
                 text = if (isLoginMode) "Bienvenido de nuevo" else "Crea tu cuenta",
-                color = MaterialTheme.colorScheme.onBackground,
+                color = colorScheme.onBackground,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -224,10 +254,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                     value = name, 
                     onValueChange = { name = it }, 
                     label = { Text("Usuario", color = Color.Gray) },
-                    textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface), 
+                    textStyle = TextStyle(color = colorScheme.onSurface),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    colors = TextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, focusedIndicatorColor = MaterialTheme.colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
+                    colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -236,10 +266,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 value = email, 
                 onValueChange = { email = it }, 
                 label = { Text("Email", color = Color.Gray) }, 
-                textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface), 
+                textStyle = TextStyle(color = colorScheme.onSurface),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = TextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, focusedIndicatorColor = MaterialTheme.colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
+                colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
             )
             Spacer(modifier = Modifier.height(12.dp))
             
@@ -247,11 +277,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 value = password, 
                 onValueChange = { password = it }, 
                 label = { Text("Contraseña", color = Color.Gray) },
-                textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface), 
+                textStyle = TextStyle(color = colorScheme.onSurface),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 visualTransformation = PasswordVisualTransformation(),
-                colors = TextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, focusedIndicatorColor = MaterialTheme.colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
+                colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = colorScheme.primary, unfocusedIndicatorColor = Color.Transparent)
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -262,7 +292,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = colorScheme.primary)
             ) {
                 Text(if (isLoginMode) "Iniciar Sesión" else "Registrarse", color = Color.White, fontWeight = FontWeight.Bold)
             }
@@ -272,7 +302,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 Text(
                     if (isLoginMode) "¿No tienes cuenta? Regístrate aquí" 
                     else "¿Ya tienes cuenta? Inicia sesión",
-                    color = MaterialTheme.colorScheme.primary
+                    color = colorScheme.primary
                 )
             }
 
@@ -284,7 +314,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 onClick = { launcher.launch(googleSignInClient.signInIntent) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = colorScheme.onBackground),
                 border = ButtonDefaults.outlinedButtonBorder(true).copy(width = 1.dp)
             ) {
                 Icon(Icons.Default.AccountCircle, null, Modifier.padding(end = 8.dp))
@@ -331,13 +361,15 @@ fun UserListScreen(
         if (uri != null) viewModel.uploadProfilePicture(context, uri)
     }
 
+    val primaryColor = colorScheme.primary
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background) {
+            ModalDrawerSheet(drawerContainerColor = colorScheme.background) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
-                    Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(colorScheme.surface), contentAlignment = Alignment.Center) {
                         if (!ownUser?.profilePicUrl.isNullOrEmpty()) {
                             AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         } else {
@@ -345,17 +377,17 @@ fun UserListScreen(
                         }
                     }
                     Spacer(Modifier.width(16.dp))
-                    Text(ownUser?.displayName ?: "Mi Perfil", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
+                    Text(ownUser?.displayName ?: "Mi Perfil", color = colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f))
-                NavigationDrawerItem(label = { Text("Nuevo Grupo", color = MaterialTheme.colorScheme.onBackground) }, selected = false, onClick = { showCreateGroupDialog = true ; scope.launch { drawerState.close() } }, icon = { Icon(Icons.Default.GroupAdd, null, tint = MaterialTheme.colorScheme.onBackground) }, colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent))
-                NavigationDrawerItem(label = { Text("Ajustes", color = MaterialTheme.colorScheme.onBackground) }, selected = false, onClick = { showSettingsDialog = true ; scope.launch { drawerState.close() } }, icon = { Icon(Icons.Default.Settings, null, tint = MaterialTheme.colorScheme.onBackground) }, colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent))
+                HorizontalDivider(color = colorScheme.onBackground.copy(alpha = 0.1f))
+                NavigationDrawerItem(label = { Text("Nuevo Grupo", color = colorScheme.onBackground) }, selected = false, onClick = { showCreateGroupDialog = true ; scope.launch { drawerState.close() } }, icon = { Icon(Icons.Default.GroupAdd, null, tint = colorScheme.onBackground) }, colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent))
+                NavigationDrawerItem(label = { Text("Ajustes", color = colorScheme.onBackground) }, selected = false, onClick = { showSettingsDialog = true ; scope.launch { drawerState.close() } }, icon = { Icon(Icons.Default.Settings, null, tint = colorScheme.onBackground) }, colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent))
                 
                 NavigationDrawerItem(
-                    label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro", color = MaterialTheme.colorScheme.onBackground) }, 
+                    label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro", color = colorScheme.onBackground) },
                     selected = false, 
                     onClick = { onThemeToggle() }, 
-                    icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null, tint = MaterialTheme.colorScheme.onBackground) }, 
+                    icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null, tint = colorScheme.onBackground) },
                     colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent)
                 )
 
@@ -377,29 +409,52 @@ fun UserListScreen(
     ) {
         Scaffold(
             bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) },
-            containerColor = MaterialTheme.colorScheme.background
+            containerColor = colorScheme.background
         ) { padding ->
             Column(modifier = Modifier.padding(padding).fillMaxSize()) {
                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { scope.launch { drawerState.open() } }) { Icon(Icons.Default.Menu, null, tint = MaterialTheme.colorScheme.onBackground) }
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) { Icon(Icons.Default.Menu, null, tint = colorScheme.onBackground) }
                     Box(modifier = Modifier.weight(1f).padding(end = 48.dp), contentAlignment = Alignment.Center) {
-                        Image(
-                            painter = painterResource(id = R.drawable.vee),
-                            contentDescription = "Logo",
-                            modifier = Modifier.size(40.dp),
-                            contentScale = ContentScale.Fit
-                        )
+                        // Logo actualizado en la pantalla de chats
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp) // Tamaño pequeño para el header
+                                .drawBehind {
+                                    val glowColor = primaryColor.copy(alpha = 0.4f)
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(glowColor, Color.Transparent),
+                                            center = Offset(size.width / 2f, size.height * 0.75f),
+                                            radius = size.width * 0.8f
+                                        )
+                                    )
+                                }
+                                .clip(CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.vee),
+                                contentDescription = "Logo",
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, primaryColor.copy(alpha = 0.1f), CircleShape),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
                 }
-                Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(56.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))) {
-                    TextField(value = searchText, onValueChange = { searchText = it }, modifier = Modifier.fillMaxSize(), placeholder = { Text("Buscar...", color = Color.Gray, fontSize = 16.sp) }, trailingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary) }, colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface), textStyle = TextStyle(fontSize = 16.sp), singleLine = true)
+                Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(56.dp), shape = RoundedCornerShape(28.dp), color = colorScheme.surface.copy(alpha = 0.5f), border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.onSurface.copy(alpha = 0.2f))) {
+                    TextField(value = searchText, onValueChange = { searchText = it }, modifier = Modifier.fillMaxSize(), placeholder = { Text("Buscar...", color = Color.Gray, fontSize = 16.sp) }, trailingIcon = { Icon(Icons.Default.Search, null, tint = colorScheme.primary) }, colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = colorScheme.onSurface, unfocusedTextColor = colorScheme.onSurface), textStyle = TextStyle(fontSize = 16.sp), singleLine = true)
                 }
                 
                 when (selectedTab) {
                     0 -> {
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = false }) { Text("Chats", color = if (!isViewingArchived) MaterialTheme.colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium) ; if (!isViewingArchived) { Spacer(Modifier.height(4.dp)) ; Box(Modifier.width(40.dp).height(2.dp).background(MaterialTheme.colorScheme.primary)) } }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = true }) { Text("Archivado", color = if (isViewingArchived) MaterialTheme.colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium) ; if (isViewingArchived) { Spacer(Modifier.height(4.dp)) ; Box(Modifier.width(40.dp).height(2.dp).background(MaterialTheme.colorScheme.primary)) } }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = false }) { Text("Chats", color = if (!isViewingArchived) colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium) ; if (!isViewingArchived) { Spacer(Modifier.height(4.dp)) ; Box(Modifier.width(40.dp).height(2.dp).background(
+                                colorScheme.primary)) } }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = true }) { Text("Archivado", color = if (isViewingArchived) colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium) ; if (isViewingArchived) { Spacer(Modifier.height(4.dp)) ; Box(Modifier.width(40.dp).height(2.dp).background(
+                                colorScheme.primary)) } }
                         }
                         val filteredUsers = users.filter { it.displayName.contains(searchText, ignoreCase = true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) }.sortedWith(compareByDescending<User> { pinnedUserIds.contains(it.uid) }.thenByDescending { lastMessages[it.uid]?.timestamp ?: 0L })
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { items(filteredUsers) { user -> val lastMsg = lastMessages[user.uid] ; ChatItem(user = user, subtitle = lastMsg?.content ?: "Sin mensajes", time = if (lastMsg != null) SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(lastMsg.timestamp)) else "", unreadCount = unreadCounts[user.uid] ?: 0, isPinned = pinnedUserIds.contains(user.uid), onClick = { viewModel.selectUser(user) }, onLongClick = { userToMenu = user }) } }
@@ -410,10 +465,10 @@ fun UserListScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Tus Grupos", color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text("Tus Grupos", color = colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             IconButton(
                                 onClick = { showCreateGroupDialog = true },
-                                modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
+                                modifier = Modifier.background(colorScheme.primary, CircleShape)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = "Crear Grupo", tint = Color.White)
                             }
@@ -439,11 +494,11 @@ fun UserListScreen(
                 Column { 
                     group.members.forEach { memberId -> 
                         val name = if (memberId == viewModel.myId) "Tú" else users.find { it.uid == memberId }?.displayName ?: "Usuario"
-                        Text("- $name", color = MaterialTheme.colorScheme.onSurface) 
+                        Text("- $name", color = colorScheme.onSurface)
                     } 
                 } 
             }, 
-            containerColor = MaterialTheme.colorScheme.surface, 
+            containerColor = colorScheme.surface,
             confirmButton = { 
                 if (group.adminId == viewModel.myId) {
                     TextButton(onClick = { viewModel.dissolveGroup(group.id) ; showGroupMembersDialog = null }) { 
@@ -453,7 +508,7 @@ fun UserListScreen(
             }, 
             dismissButton = { 
                 TextButton(onClick = { showGroupMembersDialog = null }) { 
-                    Text("Cerrar", color = MaterialTheme.colorScheme.onSurface) 
+                    Text("Cerrar", color = colorScheme.onSurface)
                 } 
             }
         )
@@ -462,24 +517,24 @@ fun UserListScreen(
         var groupName by remember { mutableStateOf("") } ; val selectedMembers = remember { mutableStateListOf<String>() }
         AlertDialog(
             onDismissRequest = { showCreateGroupDialog = false }, 
-            containerColor = MaterialTheme.colorScheme.surface, 
-            title = { Text("Crear Nuevo Grupo", color = MaterialTheme.colorScheme.onSurface) }, 
+            containerColor = colorScheme.surface,
+            title = { Text("Crear Nuevo Grupo", color = colorScheme.onSurface) },
             text = { 
                 Column { 
-                    OutlinedTextField(value = groupName, onValueChange = { groupName = it }, label = { Text("Nombre del grupo") }, modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f), RoundedCornerShape(8.dp)), colors = TextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.background, focusedContainerColor = MaterialTheme.colorScheme.background, focusedTextColor = MaterialTheme.colorScheme.onBackground, unfocusedTextColor = MaterialTheme.colorScheme.onBackground))
+                    OutlinedTextField(value = groupName, onValueChange = { groupName = it }, label = { Text("Nombre del grupo") }, modifier = Modifier.border(1.dp, colorScheme.onSurface.copy(alpha = 0.2f), RoundedCornerShape(8.dp)), colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.background, focusedContainerColor = colorScheme.background, focusedTextColor = colorScheme.onBackground, unfocusedTextColor = colorScheme.onBackground))
                     Spacer(Modifier.height(8.dp))
                     LazyColumn(modifier = Modifier.height(200.dp)) { 
                         items(users) { user -> 
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { if (selectedMembers.contains(user.uid)) selectedMembers.remove(user.uid) else selectedMembers.add(user.uid) }.padding(8.dp)) { 
                                 Checkbox(checked = selectedMembers.contains(user.uid), onCheckedChange = null)
-                                Text(user.displayName, color = MaterialTheme.colorScheme.onSurface) 
+                                Text(user.displayName, color = colorScheme.onSurface)
                             } 
                         } 
                     } 
                 } 
             }, 
             confirmButton = { 
-                Button(onClick = { if (groupName.isNotBlank()) { viewModel.createGroup(groupName, selectedMembers.toList()) ; showCreateGroupDialog = false ; Toast.makeText(context, "Grupo creado", Toast.LENGTH_SHORT).show() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { 
+                Button(onClick = { if (groupName.isNotBlank()) { viewModel.createGroup(groupName, selectedMembers.toList()) ; showCreateGroupDialog = false ; Toast.makeText(context, "Grupo creado", Toast.LENGTH_SHORT).show() } }, colors = ButtonDefaults.buttonColors(containerColor = colorScheme.primary)) {
                     Text("Crear") 
                 } 
             }
@@ -488,22 +543,22 @@ fun UserListScreen(
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false }, 
-            containerColor = MaterialTheme.colorScheme.surface, 
-            title = { Text("Ajustes de Perfil", color = MaterialTheme.colorScheme.onSurface) }, 
+            containerColor = colorScheme.surface,
+            title = { Text("Ajustes de Perfil", color = colorScheme.onSurface) },
             text = { 
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { 
-                    Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { 
+                    Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) {
                         if (!ownUser?.profilePicUrl.isNullOrEmpty()) AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) 
-                        else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.onBackground) 
+                        else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = colorScheme.onBackground)
                     }
-                    Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { 
+                    Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp), colors = ButtonDefaults.buttonColors(containerColor = colorScheme.primary)) {
                         Text("Cambiar Foto de Perfil") 
                     } 
                 } 
             }, 
             confirmButton = { 
                 TextButton(onClick = { showSettingsDialog = false }) { 
-                    Text("Cerrar", color = MaterialTheme.colorScheme.onSurface) 
+                    Text("Cerrar", color = colorScheme.onSurface)
                 } 
             }
         )
@@ -512,17 +567,17 @@ fun UserListScreen(
         val isArchived = archivedUserIds.contains(userToMenu?.uid) ; val isPinned = pinnedUserIds.contains(userToMenu?.uid)
         AlertDialog(
             onDismissRequest = { userToMenu = null }, 
-            containerColor = MaterialTheme.colorScheme.surface, 
+            containerColor = colorScheme.surface,
             confirmButton = { 
                 TextButton(onClick = { userToMenu = null }) { 
-                    Text("Cerrar", color = MaterialTheme.colorScheme.onSurface) 
+                    Text("Cerrar", color = colorScheme.onSurface)
                 } 
             }, 
-            title = { Text("Opciones de chat", color = MaterialTheme.colorScheme.onSurface) }, 
+            title = { Text("Opciones de chat", color = colorScheme.onSurface) },
             text = { 
                 Column { 
-                    ListItem(headlineContent = { Text(if (isArchived) "Desarchivar" else "Archivar", color = MaterialTheme.colorScheme.onSurface) }, leadingContent = { Icon(Icons.Default.Archive, null, tint = MaterialTheme.colorScheme.onSurface) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent), modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid) ; userToMenu = null })
-                    ListItem(headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar", color = MaterialTheme.colorScheme.onSurface) }, leadingContent = { Icon(Icons.Default.PushPin, null, tint = MaterialTheme.colorScheme.onSurface) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent), modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid) ; userToMenu = null })
+                    ListItem(headlineContent = { Text(if (isArchived) "Desarchivar" else "Archivar", color = colorScheme.onSurface) }, leadingContent = { Icon(Icons.Default.Archive, null, tint = colorScheme.onSurface) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent), modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid) ; userToMenu = null })
+                    ListItem(headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar", color = colorScheme.onSurface) }, leadingContent = { Icon(Icons.Default.PushPin, null, tint = colorScheme.onSurface) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent), modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid) ; userToMenu = null })
                     ListItem(headlineContent = { Text("Eliminar contenido", color = Color.Red.copy(alpha = 0.7f)) }, leadingContent = { Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.7f)) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent), modifier = Modifier.clickable { viewModel.clearChat() ; userToMenu = null }) 
                 } 
             }
@@ -532,15 +587,16 @@ fun UserListScreen(
 
 @Composable
 fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept: () -> Unit, onReject: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)) {
+    Surface(modifier = Modifier.fillMaxSize(), color = colorScheme.background.copy(alpha = 0.95f)) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (remoteUid != 0 && call.type == "VIDEO") { AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupRemoteVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, remoteUid)) } }, modifier = Modifier.fillMaxSize()) }
             Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(modifier = Modifier.height(64.dp))
                     if ((call.status == "ONGOING" || call.status == "CALLING") && call.type == "VIDEO") { AndroidView(factory = { context -> SurfaceView(context).apply { rtcEngine?.setupLocalVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, 0)) } }, modifier = Modifier.size(150.dp, 200.dp).clip(RoundedCornerShape(24.dp)).background(Color.Black)) }
-                    else { Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) { Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.Gray) } }
-                    Spacer(modifier = Modifier.height(24.dp)) ; Text(call.callerName, color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold) ; Text(text = when(call.status) { "RINGING" -> "Llamada entrante..." ; "CALLING" -> "Llamando..." ; else -> "En llamada activa" }, color = MaterialTheme.colorScheme.secondary, fontSize = 18.sp)
+                    else { Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(
+                        colorScheme.surface), contentAlignment = Alignment.Center) { Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.Gray) } }
+                    Spacer(modifier = Modifier.height(24.dp)) ; Text(call.callerName, color = colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold) ; Text(text = when(call.status) { "RINGING" -> "Llamada entrante..." ; "CALLING" -> "Llamando..." ; else -> "En llamada activa" }, color = colorScheme.secondary, fontSize = 18.sp)
                 }
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 64.dp), horizontalArrangement = Arrangement.SpaceEvenly) { if (call.status == "RINGING") { FloatingActionButton(onClick = onAccept, containerColor = Color(0xFF4CAF50), contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.Call, null) } } ; FloatingActionButton(onClick = onReject, containerColor = Color(0xFFFF5252), contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.CallEnd, null) } }
             }
@@ -551,12 +607,12 @@ fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept:
 @Composable
 fun CallLogItem(log: CallLog) {
     val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(log.timestamp))
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = colorScheme.surface, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (log.isOutgoing) Icons.AutoMirrored.Filled.CallMade else Icons.AutoMirrored.Filled.CallReceived, null, tint = if (log.isOutgoing) Color.Green else Color.Red)
             Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) { Text(log.partnerName, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) ; Text(time, color = Color.Gray, fontSize = 12.sp) }
-            Icon(Icons.Default.Call, null, tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) { Text(log.partnerName, color = colorScheme.onSurface, fontWeight = FontWeight.Bold) ; Text(time, color = Color.Gray, fontSize = 12.sp) }
+            Icon(Icons.Default.Call, null, tint = colorScheme.primary)
         }
     }
 }
@@ -564,12 +620,13 @@ fun CallLogItem(log: CallLog) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
+    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
         Row(modifier = Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { if (!user.profilePicUrl.isNullOrEmpty()) AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(36.dp), tint = Color.Gray) }
+            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) { if (!user.profilePicUrl.isNullOrEmpty()) AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) else Icon(Icons.Default.Person, null, modifier = Modifier.size(36.dp), tint = Color.Gray) }
             Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(text = user.displayName, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp) ; if (isPinned) { Spacer(Modifier.width(8.dp)) ; Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary) } } ; Text(text = subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1) }
-            Column(horizontalAlignment = Alignment.End) { if (time.isNotEmpty()) { Text(time, color = Color.Gray, fontSize = 12.sp) } ; if (unreadCount > 0) { Spacer(modifier = Modifier.height(4.dp)) ; Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
+            Column(modifier = Modifier.weight(1f)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(text = user.displayName, color = colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp) ; if (isPinned) { Spacer(Modifier.width(8.dp)) ; Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = colorScheme.secondary) } } ; Text(text = subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1) }
+            Column(horizontalAlignment = Alignment.End) { if (time.isNotEmpty()) { Text(time, color = Color.Gray, fontSize = 12.sp) } ; if (unreadCount > 0) { Spacer(modifier = Modifier.height(4.dp)) ; Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(
+                colorScheme.primary), contentAlignment = Alignment.Center) { Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
         }
     }
 }
@@ -577,19 +634,20 @@ fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPin
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupChatItem(group: Group, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
+    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
         Row(modifier = Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { Icon(Icons.Default.Groups, null, modifier = Modifier.size(36.dp), tint = Color.Gray) }
+            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) { Icon(Icons.Default.Groups, null, modifier = Modifier.size(36.dp), tint = Color.Gray) }
             Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(text = group.name, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp) ; if (isPinned) { Spacer(Modifier.width(8.dp)) ; Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary) } } ; Text(text = subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1) }
-            Column(horizontalAlignment = Alignment.End) { if (time.isNotEmpty()) { Text(time, color = Color.Gray, fontSize = 12.sp) } ; if (unreadCount > 0) { Spacer(modifier = Modifier.height(4.dp)) ; Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
+            Column(modifier = Modifier.weight(1f)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(text = group.name, color = colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp) ; if (isPinned) { Spacer(Modifier.width(8.dp)) ; Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = colorScheme.secondary) } } ; Text(text = subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1) }
+            Column(horizontalAlignment = Alignment.End) { if (time.isNotEmpty()) { Text(time, color = Color.Gray, fontSize = 12.sp) } ; if (unreadCount > 0) { Spacer(modifier = Modifier.height(4.dp)) ; Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(
+                colorScheme.primary), contentAlignment = Alignment.Center) { Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
         }
     }
 }
 
 @Composable
 fun BottomNavigationBar(selectedItem: Int, onItemSelected: (Int) -> Unit) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+    NavigationBar(containerColor = colorScheme.background, tonalElevation = 0.dp) {
         val items = listOf(
             Triple("Chats", Icons.AutoMirrored.Filled.Chat, 0),
             Triple("Grupos", Icons.Default.Groups, 1),
@@ -602,11 +660,11 @@ fun BottomNavigationBar(selectedItem: Int, onItemSelected: (Int) -> Unit) {
                 icon = { Icon(icon, contentDescription = label) }, 
                 label = { Text(label, fontSize = 10.sp) }, 
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary, 
+                    selectedIconColor = colorScheme.primary,
                     unselectedIconColor = Color.Gray, 
-                    selectedTextColor = MaterialTheme.colorScheme.primary, 
+                    selectedTextColor = colorScheme.primary,
                     unselectedTextColor = Color.Gray, 
-                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    indicatorColor = colorScheme.primary.copy(alpha = 0.1f)
                 )
             ) 
         }

@@ -2,6 +2,7 @@ package com.fierro.mensajeria.ui.theme
 
 import android.Manifest
 import android.graphics.Bitmap
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,6 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -40,6 +44,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import com.fierro.mensajeria.data.FirebaseMessage
 import com.fierro.mensajeria.data.MessageViewModel
+import com.fierro.mensajeria.data.User
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -60,14 +65,15 @@ fun ChatScreen(
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     var showParticipantsDialog by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
     
     var enlargedImageUrl by remember { mutableStateOf<String?>(null) }
 
     BackHandler {
-        viewModel.deselectUser()
+        if (showEmojiPicker) showEmojiPicker = false
+        else viewModel.deselectUser()
     }
 
-    // Volvemos a la versión estable de miniatura
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
@@ -94,8 +100,9 @@ fun ChatScreen(
 
     val isKeyboardVisible = WindowInsets.ime.asPaddingValues().calculateBottomPadding() > 0.dp
     LaunchedEffect(isKeyboardVisible) {
-        if (isKeyboardVisible && messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+        if (isKeyboardVisible) {
+            showEmojiPicker = false
+            if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
         }
     }
 
@@ -259,8 +266,12 @@ fun ChatScreen(
                                 )
                             }
 
-                            IconButton(onClick = { /* Emoji picker */ }) {
-                                Icon(Icons.Default.SentimentSatisfiedAlt, null, tint = Color.Gray)
+                            IconButton(onClick = { showEmojiPicker = !showEmojiPicker }) {
+                                Icon(
+                                    if (showEmojiPicker) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt, 
+                                    null, 
+                                    tint = if (showEmojiPicker) MaterialTheme.colorScheme.primary else Color.Gray
+                                )
                             }
                         }
                     }
@@ -289,6 +300,13 @@ fun ChatScreen(
                         )
                     }
                 }
+            }
+            
+            // Selector de emojis
+            if (showEmojiPicker) {
+                EmojiPickerPanel(onEmojiSelect = { emoji ->
+                    textState += emoji
+                })
             }
         }
     }
@@ -341,6 +359,37 @@ fun ChatScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun EmojiPickerPanel(onEmojiSelect: (String) -> Unit) {
+    val emojis = listOf(
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾", "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "☮️", "✝️", "☪️", "🕉️", "☸️", "✡️", "🔯", "🕎", "☯️", "☦️", "🛐", "⛎", "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓", "🆔", "⚛️", "🉑", "☢️", "☣️", "📴", "📳", "🈶", "🈚", "🈸", "🈺", "🈷️", "✴️", "🆚", "💮", "🉐", "㊙️", "㊗️", "🈴", "🈵", "🈹", "🈲", "🅰️", "🅱️", "🆎", "🆑", "🅾️", "🆘", "❌", "⭕", "🛑", "⛔", "📛", "🚫", "💯", "💢", "♨️", "🚷", "🚯", "🚳", "🚱", "🔞", "📵", "🚭", "❗", "❕", "❓", "❔", "‼️", "⁉️", "🔅", "🔆", "〽️", "⚠️", "🚸", "🔱", "⚜️", "🔰", "♻️", "✅", "🈯", "💹", "❇️", "✳️", "❎", "🌐", "💠", "Ⓜ️", "🌀", "💤", "🏧", "🚾", "♿", "🅿️", "🈳", "🈂️", "🛂", "🛃", "🛄", "🛅", "🚹", "🚺", "🚼", "🚻", "🚮", "🎦", "📶", "🈁", "🔣", "ℹ️", "🔤", "🔡", "🔠", "🆖", "🆗", "🆙", "🆒", "🆕", "🆓", "0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟", "🔢", "#️⃣", "*️⃣", "⏏️", "▶️", "⏸️", "⏯️", "⏹️", "⏺️", "⏭️", "⏮️", "⏩", "⏪", "⏫", "⏬", "◀️", "🔼", "🔽", "➡️", "⬅️", "⬆️", "⬇️", "↗️", "↘️", "↙️", "↖️", "↕️", "↔️", "↪️", "↩️", "⤴️", "⤵️", "🔀", "🔁", "🔂", "🔄", "🔃", "🎵", "🎶", "➕", "➖", "➗", "✖️", "♾️", "💲", "💱", "™️", "©️", "®️", "👁️‍🗨️", "🔚", "🔙", "🔛", "🔝", "🔜", "〰️", "➰", "➿", "✔️", "☑️", "🔘", "🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫", "⚪", "🟥", "🟧", "🟨", "🟩", "🟦", "🟪", "⬛", "⬜", "🔈", "🔇", "🔉", "🔊", "🔔", "🔕", "📣", "📢", "💬", "💭", "🗯️", "♠️", "♣️", "♥️", "♦️", "🃏", "🎴", "🀄", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛", "🕜", "🕝", "🕞", "🕟", "🕠", "🕡", "🕢", "🕣", "🕤", "🕥", "🕦", "🕧"
+    )
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(250.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp
+    ) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(48.dp),
+            contentPadding = PaddingValues(8.dp)
+        ) {
+            items(emojis) { emoji ->
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clickable { onEmojiSelect(emoji) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = emoji, fontSize = 24.sp)
+                }
+            }
+        }
     }
 }
 
