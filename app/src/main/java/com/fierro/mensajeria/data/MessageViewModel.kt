@@ -190,6 +190,26 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun setTyping(targetId: String?) {
+        if (myId == "anonimo") return
+        usersCollection.document(myId).update("typingTo", targetId)
+    }
+
+    fun addReaction(messageId: String, reaction: String) {
+        viewModelScope.launch {
+            try {
+                val msgRef = messagesCollection.document(messageId)
+                db.runTransaction { transaction ->
+                    val snapshot = transaction.get(msgRef)
+                    val reactions = snapshot.get("reactions") as? Map<String, String> ?: emptyMap()
+                    val updatedReactions = reactions.toMutableMap()
+                    updatedReactions[myId] = reaction
+                    transaction.update(msgRef, "reactions", updatedReactions)
+                }.await()
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error reaction: ${e.message}") }
+        }
+    }
+
     private fun listenForArchivedChats() {
         if (myId == "anonimo") return
         val listener = db.collection("users").document(myId).collection("archived")
@@ -224,10 +244,6 @@ class MessageViewModel : ViewModel() {
         activeListeners.add(listener)
     }
 
-    private fun addCallToLog(log: CallLog) {
-        db.collection("users").document(myId).collection("calls").add(log)
-    }
-
     fun toggleArchive(userId: String) {
         viewModelScope.launch {
             val isArchived = _archivedUserIds.value.contains(userId)
@@ -248,46 +264,11 @@ class MessageViewModel : ViewModel() {
         if (myId == "anonimo") return
         viewModelScope.launch {
             try {
-                Log.d("STORAGE", "Iniciando subida de foto de perfil...")
                 val fileRef = storage.reference.child("profile_pics/$myId.jpg")
                 fileRef.putFile(uri).await()
                 val downloadUrl = fileRef.downloadUrl.await()
                 usersCollection.document(myId).update("profilePicUrl", downloadUrl.toString()).await()
-                Log.d("STORAGE", "Foto de perfil actualizada: $downloadUrl")
             } catch (e: Exception) { Log.e("STORAGE", "Error en perfil: ${e.message}") }
-        }
-    }
-
-    /**
-     * Sube una foto en alta resolución desde un URI (archivo real)
-     */
-    fun sendImageMessageFromUri(context: Context, uri: Uri) {
-        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
-        val messageId = UUID.randomUUID().toString()
-        
-        viewModelScope.launch {
-            try {
-                Log.d("STORAGE", "Subiendo imagen HD al Bucket...")
-                val imageRef = storage.reference.child("chat_images/$messageId.jpg")
-                
-                // Subimos el archivo original directamente para máxima calidad
-                imageRef.putFile(uri).await()
-                
-                val imageUrl = imageRef.downloadUrl.await().toString()
-                
-                val messageData = hashMapOf(
-                    "senderId" to myId,
-                    "receiverId" to receiverId,
-                    "content" to "📷 FOTO_MSG:$imageUrl",
-                    "timestamp" to System.currentTimeMillis(),
-                    "read" to false
-                )
-                messagesCollection.add(messageData).await()
-                Log.d("STORAGE", "Imagen HD enviada con éxito")
-                
-            } catch (e: Exception) {
-                Log.e("STORAGE", "Error al enviar imagen HD: ${e.message}")
-            }
         }
     }
 
@@ -297,29 +278,46 @@ class MessageViewModel : ViewModel() {
         
         viewModelScope.launch {
             try {
-                Log.d("STORAGE", "Iniciando subida de imagen de chat...")
                 val baos = ByteArrayOutputStream()
-                // Calidad al 100% para evitar pérdida
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, baos)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
                 val data = baos.toByteArray()
-
                 val imageRef = storage.reference.child("chat_images/$messageId.jpg")
                 imageRef.putBytes(data).await()
-                
                 val imageUrl = imageRef.downloadUrl.await().toString()
+                sendMessage("📷 FOTO_MSG:$imageUrl")
+            } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
+        }
+    }
 
-                val messageData = hashMapOf(
-                    "senderId" to myId,
-                    "receiverId" to receiverId,
-                    "content" to "📷 FOTO_MSG:$imageUrl",
-                    "timestamp" to System.currentTimeMillis(),
-                    "read" to false
-                )
-                messagesCollection.add(messageData).await()
-                
-            } catch (e: Exception) {
-                Log.e("STORAGE", "Error al enviar imagen: ${e.message}")
-            }
+    fun sendImageMessageFromUri(uri: Uri) {
+        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+        val messageId = UUID.randomUUID().toString()
+        
+        viewModelScope.launch {
+            try {
+                val imageRef = storage.reference.child("chat_images/$messageId.jpg")
+                imageRef.putFile(uri).await()
+                val imageUrl = imageRef.downloadUrl.await().toString()
+                sendMessage("📷 FOTO_MSG:$imageUrl")
+            } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
+        }
+    }
+
+    fun sendLocationMessage(lat: Double, lng: Double) {
+        sendMessage("📍 LOCATION_MSG:$lat,$lng")
+    }
+
+    fun sendAudioMessage(uri: Uri) {
+        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+        val messageId = UUID.randomUUID().toString()
+        
+        viewModelScope.launch {
+            try {
+                val audioRef = storage.reference.child("chat_audios/$messageId.mp4")
+                audioRef.putFile(uri).await()
+                val audioUrl = audioRef.downloadUrl.await().toString()
+                sendMessage("🎤 AUDIO_MSG:$audioUrl")
+            } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
         }
     }
 
@@ -388,7 +386,6 @@ class MessageViewModel : ViewModel() {
         _selectedGroup.value = null
         _selectedUser.value = user
         markMessagesAsRead(user.uid, false)
-
         val newMap = _unreadCounts.value.toMutableMap()
         newMap.remove(user.uid)
         _unreadCounts.value = newMap
@@ -398,7 +395,6 @@ class MessageViewModel : ViewModel() {
         _selectedUser.value = null
         _selectedGroup.value = group
         markMessagesAsRead(group.id, true)
-
         val newMap = _unreadCounts.value.toMutableMap()
         newMap.remove(group.id)
         _unreadCounts.value = newMap
@@ -473,7 +469,6 @@ class MessageViewModel : ViewModel() {
                             }
                         }
                         val sorted = filtered.sortedBy { it.timestamp }
-                        
                         val chatId = group?.id ?: user?.uid
                         if (chatId != null) {
                             val hasUnreadFromOthers = sorted.any { it.senderId != myId && !it.read }
@@ -481,7 +476,6 @@ class MessageViewModel : ViewModel() {
                                 markMessagesAsRead(chatId, group != null)
                             }
                         }
-                        
                         trySend(sorted)
                     }
                 }
@@ -492,20 +486,16 @@ class MessageViewModel : ViewModel() {
     fun sendMessage(content: String) {
         val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val currentUserId = myId
-
         viewModelScope.launch {
             val messageData = hashMapOf(
                 "senderId" to currentUserId,
                 "receiverId" to receiverId,
                 "content" to content,
                 "timestamp" to System.currentTimeMillis(),
-                "read" to false
+                "read" to false,
+                "reactions" to emptyMap<String, String>()
             )
-
             messagesCollection.add(messageData)
-                .addOnFailureListener { e ->
-                    Log.e("FIRESTORE", "Error al enviar mensaje: ${e.message}")
-                }
         }
     }
 
@@ -513,5 +503,9 @@ class MessageViewModel : ViewModel() {
         super.onCleared()
         activeListeners.forEach { it.remove() }
         activeListeners.clear()
+    }
+
+    private fun addCallToLog(log: CallLog) {
+        db.collection("users").document(myId).collection("calls").add(log)
     }
 }

@@ -14,12 +14,13 @@ class AudioRecorder(private val context: Context) {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(context)
         } else {
+            @Suppress("DEPRECATION")
             MediaRecorder()
         }
     }
 
     fun start(outputFile: File) {
-        createRecorder().apply {
+        recorder = createRecorder().apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -27,14 +28,21 @@ class AudioRecorder(private val context: Context) {
 
             prepare()
             start()
-
-            recorder = this
         }
     }
 
     fun stop() {
-        recorder?.stop()
+        try {
+            recorder?.stop()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         recorder?.reset()
+        recorder?.release()
         recorder = null
+    }
+
+    fun getMaxAmplitude(): Int {
+        return recorder?.maxAmplitude ?: 0
     }
 }
