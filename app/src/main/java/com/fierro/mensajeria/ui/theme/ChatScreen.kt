@@ -2,16 +2,14 @@ package com.fierro.mensajeria.ui.theme
 
 import android.Manifest
 import android.content.Intent
-import android.graphics.Bitmap
-import android.net.Uri
 import android.location.Location
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -19,7 +17,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,10 +35,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -50,7 +49,6 @@ import coil.compose.SubcomposeAsyncImage
 import com.fierro.mensajeria.data.AudioRecorder
 import com.fierro.mensajeria.data.FirebaseMessage
 import com.fierro.mensajeria.data.MessageViewModel
-import com.fierro.mensajeria.data.User
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
@@ -68,6 +66,7 @@ fun ChatScreen(
     val selectedUser by viewModel.selectedUser.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
     val users by viewModel.users.collectAsState()
+    val blockedUserIds by viewModel.blockedUserIds.collectAsState()
     
     var textState by remember { mutableStateOf("") }
     var localSearchText by remember { mutableStateOf("") }
@@ -81,6 +80,9 @@ fun ChatScreen(
     var showEmojiPicker by remember { mutableStateOf(false) }
     var enlargedImageUrl by remember { mutableStateOf<String?>(null) }
     var messageToReact by remember { mutableStateOf<FirebaseMessage?>(null) }
+    var selectedTimer by remember { mutableStateOf<Int?>(null) }
+
+    val isBlocked = selectedUser?.let { blockedUserIds.contains(it.uid) } ?: false
 
     // Indicador de "Escribiendo..."
     val typingUser = remember(users, selectedUser) {
@@ -115,11 +117,11 @@ fun ChatScreen(
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) viewModel.sendImageMessage(bitmap)
+        if (bitmap != null) viewModel.sendImageMessage(bitmap, selectedTimer)
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) viewModel.sendImageMessageFromUri(uri)
+        if (uri != null) viewModel.sendImageMessageFromUri(uri, selectedTimer)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -132,10 +134,10 @@ fun ChatScreen(
             try {
                 fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
                     .addOnSuccessListener { location: Location? ->
-                        if (location != null) viewModel.sendLocationMessage(location.latitude, location.longitude)
+                        if (location != null) viewModel.sendLocationMessage(location.latitude, location.longitude, selectedTimer)
                         else {
                             fusedLocationClient.lastLocation.addOnSuccessListener { lastLoc: Location? ->
-                                if (lastLoc != null) viewModel.sendLocationMessage(lastLoc.latitude, lastLoc.longitude)
+                                if (lastLoc != null) viewModel.sendLocationMessage(lastLoc.latitude, lastLoc.longitude, selectedTimer)
                             }
                         }
                     }
@@ -172,7 +174,7 @@ fun ChatScreen(
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -222,6 +224,30 @@ fun ChatScreen(
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, null) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, containerColor = MaterialTheme.colorScheme.surface) {
+                            if (selectedUser != null) {
+                                DropdownMenuItem(
+                                    text = { Text(if (isBlocked) "Desbloquear" else "Bloquear") },
+                                    onClick = { viewModel.toggleBlock(selectedUser!!.uid); showMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Block, null, tint = if (isBlocked) Color.Green else Color.Red) }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Mensajes temporales: ${selectedTimer?.let { "$it seg" } ?: "Off"}") },
+                                onClick = { /* Nested menu could go here, for simplicity toggling or show sub-options */ },
+                                leadingIcon = { Icon(Icons.Default.Timer, null) },
+                                trailingIcon = {
+                                    Row {
+                                        listOf(null, 10, 60).forEach { time ->
+                                            Text(
+                                                text = time?.toString() ?: "Off",
+                                                modifier = Modifier.padding(horizontal = 4.dp).clickable { selectedTimer = time; showMenu = false },
+                                                color = if (selectedTimer == time) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            )
                             DropdownMenuItem(text = { Text("Vaciar chat") }, onClick = { viewModel.clearChat(); showMenu = false }, leadingIcon = { Icon(Icons.Default.DeleteSweep, null) })
                             DropdownMenuItem(text = { Text("Compartir Ubicación") }, onClick = { locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)); showMenu = false }, leadingIcon = { Icon(Icons.Default.LocationOn, null) })
                         }
@@ -248,50 +274,66 @@ fun ChatScreen(
                 }
             }
 
-            Surface(color = Color.Transparent, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
-                            if (isRecording) {
-                                WaveformAnimation(amplitudes = amplitudes)
-                                Spacer(Modifier.weight(1f))
-                                Text("Grabando...", color = Color.Red, fontSize = 14.sp)
-                                IconButton(onClick = {
-                                    isRecording = false
-                                    recorder.stop()
-                                    audioFile?.let { viewModel.sendAudioMessage(Uri.fromFile(it)) }
-                                }) { Icon(Icons.Default.Check, null, tint = Color.Green) }
-                                IconButton(onClick = { isRecording = false; recorder.stop(); audioFile?.delete() }) { Icon(Icons.Default.Close, null, tint = Color.Red) }
-                            } else {
-                                IconButton(onClick = { galleryLauncher.launch("image/*") }) { Icon(Icons.Default.Photo, null, tint = Color.Gray) }
-                                IconButton(onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA)) }) { Icon(Icons.Default.PhotoCamera, null, tint = Color.Gray) }
-                                Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
-                                    if (textState.isEmpty()) Text("Mensaje...", color = Color.Gray, fontSize = 16.sp)
-                                    BasicTextField(value = textState, onValueChange = { textState = it }, modifier = Modifier.fillMaxWidth().focusRequester(focusRequester), textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp), cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 4)
+            if (isBlocked) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        "Has bloqueado a este usuario. Desbloquéalo para enviar mensajes.",
+                        modifier = Modifier.padding(12.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 14.sp
+                    )
+                }
+            } else {
+                Surface(color = Color.Transparent, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                                if (isRecording) {
+                                    WaveformAnimation(amplitudes = amplitudes)
+                                    Spacer(Modifier.weight(1f))
+                                    Text("Grabando...", color = Color.Red, fontSize = 14.sp)
+                                    IconButton(onClick = {
+                                        isRecording = false
+                                        recorder.stop()
+                                        audioFile?.let { viewModel.sendAudioMessage(Uri.fromFile(it), selectedTimer) }
+                                    }) { Icon(Icons.Default.Check, null, tint = Color.Green) }
+                                    IconButton(onClick = { isRecording = false; recorder.stop(); audioFile?.delete() }) { Icon(Icons.Default.Close, null, tint = Color.Red) }
+                                } else {
+                                    IconButton(onClick = { galleryLauncher.launch("image/*") }) { Icon(Icons.Default.Photo, null, tint = Color.Gray) }
+                                    IconButton(onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA)) }) { Icon(Icons.Default.PhotoCamera, null, tint = Color.Gray) }
+                                    Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
+                                        if (textState.isEmpty()) Text("Mensaje...", color = Color.Gray, fontSize = 16.sp)
+                                        BasicTextField(value = textState, onValueChange = { textState = it }, modifier = Modifier.fillMaxWidth().focusRequester(focusRequester), textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp), cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 4)
+                                    }
+                                    IconButton(onClick = { showEmojiPicker = !showEmojiPicker }) { Icon(if (showEmojiPicker) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt, null, tint = if (showEmojiPicker) MaterialTheme.colorScheme.primary else Color.Gray) }
                                 }
-                                IconButton(onClick = { showEmojiPicker = !showEmojiPicker }) { Icon(if (showEmojiPicker) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt, null, tint = if (showEmojiPicker) MaterialTheme.colorScheme.primary else Color.Gray) }
                             }
                         }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    FloatingActionButton(
-                        onClick = {
-                            if (textState.isNotBlank()) {
-                                viewModel.sendMessage(textState)
-                                textState = ""
-                            } else if (!isRecording) {
-                                audioFile = File(context.cacheDir, "audio_${System.currentTimeMillis()}.mp4")
-                                recorder.start(audioFile!!)
-                                isRecording = true
-                            } else {
-                                isRecording = false
-                                recorder.stop()
-                                audioFile?.let { viewModel.sendAudioMessage(Uri.fromFile(it)) }
-                            }
-                        },
-                        shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White, modifier = Modifier.size(48.dp), elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
-                    ) {
-                        Icon(if (textState.isNotBlank()) Icons.AutoMirrored.Filled.Send else if (isRecording) Icons.Default.Stop else Icons.Default.Mic, null, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        FloatingActionButton(
+                            onClick = {
+                                if (textState.isNotBlank()) {
+                                    viewModel.sendMessage(textState, selectedTimer)
+                                    textState = ""
+                                } else if (!isRecording) {
+                                    audioFile = File(context.cacheDir, "audio_${System.currentTimeMillis()}.mp4")
+                                    recorder.start(audioFile!!)
+                                    isRecording = true
+                                } else {
+                                    isRecording = false
+                                    recorder.stop()
+                                    audioFile?.let { viewModel.sendAudioMessage(Uri.fromFile(it), selectedTimer) }
+                                }
+                            },
+                            shape = CircleShape, containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White, modifier = Modifier.size(48.dp), elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                        ) {
+                            Icon(if (textState.isNotBlank()) Icons.AutoMirrored.Filled.Send else if (isRecording) Icons.Default.Stop else Icons.Default.Mic, null, modifier = Modifier.size(24.dp))
+                        }
                     }
                 }
             }
@@ -420,6 +462,13 @@ fun ChatBubble(
                 )
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
+                    if (message.expiresAt != null && message.expiresAt != 0L) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                            Icon(Icons.Default.Timer, null, modifier = Modifier.size(12.dp), tint = Color.Gray)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Mensaje temporal", color = Color.Gray, fontSize = 10.sp)
+                        }
+                    }
                     when {
                         message.content.startsWith("📷 FOTO_MSG:") -> {
                             val imageUrl = message.content.removePrefix("📷 FOTO_MSG:")
@@ -428,7 +477,6 @@ fun ChatBubble(
                             }
                         }
                         message.content.startsWith("🎤 AUDIO_MSG:") -> {
-                            val audioUrl = message.content.removePrefix("🎤 AUDIO_MSG:")
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { /* logic to play audio */ }) {
                                 Icon(Icons.Default.PlayArrow, null)
                                 Spacer(Modifier.width(8.dp))
@@ -492,8 +540,4 @@ fun ChatBubble(
             }
         }
     }
-}
-
-fun Color.luminance(): Float {
-    return 0.2126f * red + 0.7152f * green + 0.0722f * blue
 }

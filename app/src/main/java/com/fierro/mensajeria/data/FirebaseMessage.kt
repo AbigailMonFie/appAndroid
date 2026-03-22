@@ -10,5 +10,6 @@ data class FirebaseMessage(
     val content: String = "",
     val timestamp: Long = 0,
     val read: Boolean = false,
-    val reactions: Map<String, String> = emptyMap()
+    val reactions: Map<String, String> = emptyMap(),
+    val expiresAt: Long? = null
 )

@@ -15,6 +15,7 @@ firebaseBom = "33.9.0"
 agora = "4.6.3"
 google-auth = "21.2.0"
 playServicesLocation = "21.3.0"
+biometric = "1.2.0-alpha05"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,6 +45,7 @@ firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging
 google-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "google-auth" }
 agora-rtc = { group = "io.agora.rtc", name = "full-sdk", version.ref = "agora" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

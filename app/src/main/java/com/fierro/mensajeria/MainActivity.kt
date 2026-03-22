@@ -11,6 +11,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -50,6 +53,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.fierro.mensajeria.data.*
@@ -66,7 +74,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private var rtcEngine: RtcEngine? = null
     private var remoteUidState = mutableIntStateOf(0)
 
@@ -88,6 +96,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var isDarkMode by rememberSaveable { mutableStateOf(true) }
+            var isAppUnlocked by rememberSaveable { mutableStateOf(false) }
+
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_STOP) {
+                        isAppUnlocked = false 
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+
             MensajeriaTheme(darkTheme = isDarkMode) {
                 val authViewModel: AuthViewModel = viewModel()
                 val chatViewModel: MessageViewModel = viewModel()
@@ -95,6 +116,15 @@ class MainActivity : ComponentActivity() {
                 val selectedUser by chatViewModel.selectedUser.collectAsState()
                 val selectedGroup by chatViewModel.selectedGroup.collectAsState()
                 val currentCall by chatViewModel.currentCall.collectAsState()
+                val isBiometricEnabled by chatViewModel.isBiometricEnabled.collectAsState()
+
+                LaunchedEffect(currentUser, isBiometricEnabled, isAppUnlocked) {
+                    if (currentUser != null && isBiometricEnabled == true && !isAppUnlocked) {
+                        showBiometricPrompt { isAppUnlocked = true }
+                    } else if (currentUser != null && isBiometricEnabled == false) {
+                        isAppUnlocked = true
+                    }
+                }
 
                 LaunchedEffect(selectedUser, selectedGroup) {
                     selectedUser?.let { chatViewModel.markMessagesAsRead(it.uid, false) }
@@ -104,8 +134,30 @@ class MainActivity : ComponentActivity() {
                 Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     if (currentUser == null) {
                         LoginScreen(onLoginSuccess = { chatViewModel.onUserAuthenticated() }, viewModel = authViewModel)
+                    } else if (isBiometricEnabled == null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (!isAppUnlocked && isBiometricEnabled == true) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.Lock, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(16.dp))
+                                Text("Acceso Protegido", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground)
+                                Spacer(Modifier.height(24.dp))
+                                Button(onClick = { showBiometricPrompt { isAppUnlocked = true } }) {
+                                    Text("Desbloquear con Biometría")
+                                }
+                            }
+                        }
                     } else if (selectedUser == null && selectedGroup == null) {
-                        UserListScreen(viewModel = chatViewModel, authViewModel = authViewModel, isDarkMode = isDarkMode, onThemeToggle = { isDarkMode = !isDarkMode })
+                        UserListScreen(
+                            viewModel = chatViewModel, 
+                            authViewModel = authViewModel, 
+                            isDarkMode = isDarkMode, 
+                            onThemeToggle = { isDarkMode = !isDarkMode },
+                            onBiometricVerify = { onSuccess -> showBiometricPrompt(onSuccess) }
+                        )
                     } else {
                         ChatScreen(viewModel = chatViewModel, modifier = Modifier.fillMaxSize())
                     }
@@ -128,6 +180,30 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun showBiometricPrompt(onSuccess: () -> Unit) {
+        val executor = ContextCompat.getMainExecutor(this)
+        val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
+                    Toast.makeText(this@MainActivity, errString, Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Bloqueo de Mensajería")
+            .setSubtitle("Usa tu huella o patrón para acceder")
+            .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+            .build()
+
+        biometricPrompt.authenticate(promptInfo)
     }
 
     private fun setupAgora(channelName: String) {
@@ -299,15 +375,23 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, isDarkMode: Boolean, onThemeToggle: () -> Unit) {
+fun UserListScreen(
+    viewModel: MessageViewModel, 
+    authViewModel: AuthViewModel, 
+    isDarkMode: Boolean, 
+    onThemeToggle: () -> Unit,
+    onBiometricVerify: (onSuccess: () -> Unit) -> Unit = {}
+) {
     val users by viewModel.users.collectAsState()
     val groups by viewModel.groups.collectAsState()
     val archivedUserIds by viewModel.archivedUserIds.collectAsState()
     val pinnedUserIds by viewModel.pinnedUserIds.collectAsState()
+    val blockedUserIds by viewModel.blockedUserIds.collectAsState()
     val lastMessages by viewModel.lastMessages.collectAsState()
     val unreadCounts by viewModel.unreadCounts.collectAsState()
     val callLogs by viewModel.callLogs.collectAsState()
     val ownUser by viewModel.ownUser.collectAsState()
+    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
 
     val startDrawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val endDrawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -595,6 +679,22 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                     Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp), colors = ButtonDefaults.buttonColors(containerColor = primaryColor)) {
                         Text("Cambiar Foto de Perfil")
                     }
+                    Spacer(Modifier.height(24.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        Icon(Icons.Default.Fingerprint, null, tint = colorScheme.onSurface)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Bloqueo con huella o patrón", modifier = Modifier.weight(1f), color = colorScheme.onSurface)
+                        Switch(
+                            checked = isBiometricEnabled ?: false,
+                            onCheckedChange = { enabled ->
+                                viewModel.toggleBiometric(enabled, onPromptRequired = {
+                                    onBiometricVerify {
+                                        viewModel.updateBiometricSettings(true)
+                                    }
+                                })
+                            }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -608,6 +708,7 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
     if (userToMenu != null) {
         val isArchived = archivedUserIds.contains(userToMenu?.uid)
         val isPinned = pinnedUserIds.contains(userToMenu?.uid)
+        val isBlocked = blockedUserIds.contains(userToMenu?.uid)
         AlertDialog(
             onDismissRequest = { userToMenu = null },
             containerColor = colorScheme.surface,
@@ -634,6 +735,15 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier.clickable {
                             viewModel.togglePin(userToMenu!!.uid)
+                            userToMenu = null
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text(if (isBlocked) "Desbloquear" else "Bloquear", color = Color.Red.copy(alpha = 0.7f)) },
+                        leadingContent = { Icon(Icons.Default.Block, null, tint = Color.Red.copy(alpha = 0.7f)) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable {
+                            viewModel.toggleBlock(userToMenu!!.uid)
                             userToMenu = null
                         }
                     )

@@ -13,6 +13,7 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -58,6 +59,9 @@ class MessageViewModel : ViewModel() {
     private val _pinnedUserIds = MutableStateFlow<Set<String>>(emptySet())
     val pinnedUserIds = _pinnedUserIds.asStateFlow()
 
+    private val _blockedUserIds = MutableStateFlow<Set<String>>(emptySet())
+    val blockedUserIds = _blockedUserIds.asStateFlow()
+
     private val _lastMessages = MutableStateFlow<Map<String, FirebaseMessage>>(emptyMap())
     val lastMessages = _lastMessages.asStateFlow()
 
@@ -67,9 +71,30 @@ class MessageViewModel : ViewModel() {
     private val _callLogs = MutableStateFlow<List<CallLog>>(emptyList())
     val callLogs = _callLogs.asStateFlow()
 
+    private val _isBiometricEnabled = MutableStateFlow<Boolean?>(null)
+    val isBiometricEnabled = _isBiometricEnabled.asStateFlow()
+
     init {
         if (auth.currentUser != null) {
             loadInitialData()
+        }
+        startDisappearingMessagesWorker()
+    }
+
+    private fun startDisappearingMessagesWorker() {
+        viewModelScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                try {
+                    val expired = messagesCollection.whereLessThan("expiresAt", now).get().await()
+                    if (!expired.isEmpty) {
+                        val batch = db.batch()
+                        expired.documents.forEach { batch.delete(it.reference) }
+                        batch.commit().await()
+                    }
+                } catch (e: Exception) { Log.e("WORKER", "Error cleanup: ${e.message}") }
+                delay(10000) // Revisar cada 10 segundos
+            }
         }
     }
 
@@ -90,9 +115,11 @@ class MessageViewModel : ViewModel() {
         _currentCall.value = null
         _archivedUserIds.value = emptySet()
         _pinnedUserIds.value = emptySet()
+        _blockedUserIds.value = emptySet()
         _lastMessages.value = emptyMap()
         _unreadCounts.value = emptyMap()
         _callLogs.value = emptyList()
+        _isBiometricEnabled.value = null
     }
 
     private fun loadInitialData() {
@@ -102,8 +129,32 @@ class MessageViewModel : ViewModel() {
         listenForCalls()
         listenForArchivedChats()
         listenForPinnedChats()
+        listenForBlockedChats()
         listenForLastMessages()
         listenForCallLogs()
+        checkBiometricSettings()
+    }
+
+    private fun checkBiometricSettings() {
+        if (myId == "anonimo") return
+        usersCollection.document(myId).get().addOnSuccessListener { 
+            _isBiometricEnabled.value = it.getBoolean("biometricEnabled") ?: false
+        }
+    }
+
+    fun toggleBiometric(enabled: Boolean, onPromptRequired: () -> Unit = {}) {
+        if (myId == "anonimo") return
+        if (enabled) {
+            onPromptRequired()
+        } else {
+            updateBiometricSettings(false)
+        }
+    }
+
+    fun updateBiometricSettings(enabled: Boolean) {
+        usersCollection.document(myId).update("biometricEnabled", enabled).addOnSuccessListener {
+            _isBiometricEnabled.value = enabled
+        }
     }
 
     private fun fetchOwnProfile() {
@@ -119,40 +170,42 @@ class MessageViewModel : ViewModel() {
     private fun listenForLastMessages() {
         if (myId == "anonimo") return
         
-        val listener = messagesCollection.orderBy("timestamp", Query.Direction.DESCENDING)
-            .limit(100) 
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot != null) {
-                    val allMessages = snapshot.toObjects(FirebaseMessage::class.java)
-                    val lastMsgsMap = mutableMapOf<String, FirebaseMessage>()
-                    val unreadCountsMap = mutableMapOf<String, Int>()
+        val listener = combine(
+            messagesCollection.orderBy("timestamp", Query.Direction.DESCENDING).limit(100).snapshots(),
+            _blockedUserIds
+        ) { snapshot, blocked -> snapshot to blocked }
+            .onEach { (snapshot, blocked) ->
+                val allMessages = snapshot.toObjects(FirebaseMessage::class.java)
+                val lastMsgsMap = mutableMapOf<String, FirebaseMessage>()
+                val unreadCountsMap = mutableMapOf<String, Int>()
+                
+                val myGroupIds = _groups.value.map { it.id }
+                
+                allMessages.forEach { msg ->
+                    // Filter messages from blocked users
+                    if (msg.senderId != myId && blocked.contains(msg.senderId)) return@forEach
+
+                    val isGroupMsg = myGroupIds.contains(msg.receiverId)
+                    val isDirectMsg = msg.senderId == myId || msg.receiverId == myId
                     
-                    val myGroupIds = _groups.value.map { it.id }
-                    
-                    allMessages.forEach { msg ->
-                        val isGroupMsg = myGroupIds.contains(msg.receiverId)
-                        val isDirectMsg = msg.senderId == myId || msg.receiverId == myId
+                    if (isGroupMsg || isDirectMsg) {
+                        val chatKey = if (isGroupMsg) msg.receiverId else (if (msg.senderId == myId) msg.receiverId else msg.senderId)
                         
-                        if (isGroupMsg || isDirectMsg) {
-                            val chatKey = if (isGroupMsg) msg.receiverId else (if (msg.senderId == myId) msg.receiverId else msg.senderId)
-                            
-                            if (!lastMsgsMap.containsKey(chatKey)) {
-                                lastMsgsMap[chatKey] = msg
-                            }
-                            
-                            if (msg.senderId != myId && !msg.read) {
-                                val currentOpenChatId = _selectedUser.value?.uid ?: _selectedGroup.value?.id
-                                if (chatKey != currentOpenChatId) {
-                                    unreadCountsMap[chatKey] = (unreadCountsMap[chatKey] ?: 0) + 1
-                                }
+                        if (!lastMsgsMap.containsKey(chatKey)) {
+                            lastMsgsMap[chatKey] = msg
+                        }
+                        
+                        if (msg.senderId != myId && !msg.read) {
+                            val currentOpenChatId = _selectedUser.value?.uid ?: _selectedGroup.value?.id
+                            if (chatKey != currentOpenChatId) {
+                                unreadCountsMap[chatKey] = (unreadCountsMap[chatKey] ?: 0) + 1
                             }
                         }
                     }
-                    _lastMessages.value = lastMsgsMap
-                    _unreadCounts.value = unreadCountsMap
                 }
-            }
-        activeListeners.add(listener)
+                _lastMessages.value = lastMsgsMap
+                _unreadCounts.value = unreadCountsMap
+            }.launchIn(viewModelScope)
     }
 
     fun markMessagesAsRead(chatId: String, isGroup: Boolean) {
@@ -232,6 +285,17 @@ class MessageViewModel : ViewModel() {
         activeListeners.add(listener)
     }
 
+    private fun listenForBlockedChats() {
+        if (myId == "anonimo") return
+        val listener = db.collection("users").document(myId).collection("blocked")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    _blockedUserIds.value = snapshot.documents.map { it.id }.toSet()
+                }
+            }
+        activeListeners.add(listener)
+    }
+
     private fun listenForCallLogs() {
         if (myId == "anonimo") return
         val listener = db.collection("users").document(myId).collection("calls")
@@ -260,6 +324,14 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun toggleBlock(userId: String) {
+        viewModelScope.launch {
+            val isBlocked = _blockedUserIds.value.contains(userId)
+            val docRef = db.collection("users").document(myId).collection("blocked").document(userId)
+            if (isBlocked) docRef.delete() else docRef.set(mapOf("active" to true))
+        }
+    }
+
     fun uploadProfilePicture(context: Context, uri: Uri) {
         if (myId == "anonimo") return
         viewModelScope.launch {
@@ -272,8 +344,7 @@ class MessageViewModel : ViewModel() {
         }
     }
 
-    fun sendImageMessage(bitmap: Bitmap) {
-        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+    fun sendImageMessage(bitmap: Bitmap, disappearingSeconds: Int? = null) {
         val messageId = UUID.randomUUID().toString()
         
         viewModelScope.launch {
@@ -284,13 +355,12 @@ class MessageViewModel : ViewModel() {
                 val imageRef = storage.reference.child("chat_images/$messageId.jpg")
                 imageRef.putBytes(data).await()
                 val imageUrl = imageRef.downloadUrl.await().toString()
-                sendMessage("📷 FOTO_MSG:$imageUrl")
+                sendMessage("📷 FOTO_MSG:$imageUrl", disappearingSeconds)
             } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
         }
     }
 
-    fun sendImageMessageFromUri(uri: Uri) {
-        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+    fun sendImageMessageFromUri(uri: Uri, disappearingSeconds: Int? = null) {
         val messageId = UUID.randomUUID().toString()
         
         viewModelScope.launch {
@@ -298,17 +368,16 @@ class MessageViewModel : ViewModel() {
                 val imageRef = storage.reference.child("chat_images/$messageId.jpg")
                 imageRef.putFile(uri).await()
                 val imageUrl = imageRef.downloadUrl.await().toString()
-                sendMessage("📷 FOTO_MSG:$imageUrl")
+                sendMessage("📷 FOTO_MSG:$imageUrl", disappearingSeconds)
             } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
         }
     }
 
-    fun sendLocationMessage(lat: Double, lng: Double) {
-        sendMessage("📍 LOCATION_MSG:$lat,$lng")
+    fun sendLocationMessage(lat: Double, lng: Double, disappearingSeconds: Int? = null) {
+        sendMessage("📍 LOCATION_MSG:$lat,$lng", disappearingSeconds)
     }
 
-    fun sendAudioMessage(uri: Uri) {
-        val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
+    fun sendAudioMessage(uri: Uri, disappearingSeconds: Int? = null) {
         val messageId = UUID.randomUUID().toString()
         
         viewModelScope.launch {
@@ -316,7 +385,7 @@ class MessageViewModel : ViewModel() {
                 val audioRef = storage.reference.child("chat_audios/$messageId.mp4")
                 audioRef.putFile(uri).await()
                 val audioUrl = audioRef.downloadUrl.await().toString()
-                sendMessage("🎤 AUDIO_MSG:$audioUrl")
+                sendMessage("🎤 AUDIO_MSG:$audioUrl", disappearingSeconds)
             } catch (e: Exception) { Log.e("STORAGE", "Error: ${e.message}") }
         }
     }
@@ -362,7 +431,24 @@ class MessageViewModel : ViewModel() {
         if (_selectedGroup.value != null) {
             _selectedGroup.value?.members?.forEach { if (it != myId) callsCollection.document(it).set(call) }
         } else {
-            callsCollection.document(targetId).set(call)
+            // Check if I am blocked by the receiver before calling
+            viewModelScope.launch {
+                try {
+                    val isBlockedByReceiver = db.collection("users").document(targetId)
+                        .collection("blocked").document(myId).get().await().exists()
+                    if (!isBlockedByReceiver) {
+                        callsCollection.document(targetId).set(call)
+                        _currentCall.value = call.copy(status = "CALLING")
+                        addCallToLog(CallLog(UUID.randomUUID().toString(), targetName, type, System.currentTimeMillis(), true))
+                    } else {
+                        Log.d("BLOCK", "No se puede iniciar llamada: El destinatario te ha bloqueado.")
+                    }
+                } catch (e: Exception) {
+                    Log.e("BLOCK", "Error al verificar bloqueo en llamada: ${e.message}")
+                    // Ante la duda (error de permisos), podríamos optar por no permitir la llamada o reintentar
+                }
+            }
+            return
         }
         _currentCall.value = call.copy(status = "CALLING")
         addCallToLog(CallLog(UUID.randomUUID().toString(), targetName, type, System.currentTimeMillis(), true))
@@ -447,8 +533,9 @@ class MessageViewModel : ViewModel() {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun getMessages(): Flow<List<FirebaseMessage>> = combine(_selectedUser, _selectedGroup) { user, group -> user to group }
-        .flatMapLatest { (user, group) ->
+    fun getMessages(): Flow<List<FirebaseMessage>> = combine(_selectedUser, _selectedGroup, _blockedUserIds) { user, group, blocked -> 
+        Triple(user, group, blocked) 
+    }.flatMapLatest { (user, group, blocked) ->
             if (user == null && group == null) return@flatMapLatest flowOf(emptyList())
             callbackFlow {
                 val query = if (group != null) {
@@ -464,8 +551,10 @@ class MessageViewModel : ViewModel() {
                             allMsgs
                         } else {
                             allMsgs.filter { 
-                                (it.senderId == myId && it.receiverId == user!!.uid) || 
-                                (it.senderId == user!!.uid && it.receiverId == myId) 
+                                val isOurChat = (it.senderId == myId && it.receiverId == user!!.uid) || 
+                                              (it.senderId == user!!.uid && it.receiverId == myId)
+                                // Only show if it's our chat AND sender is not blocked
+                                isOurChat && !blocked.contains(it.senderId)
                             }
                         }
                         val sorted = filtered.sortedBy { it.timestamp }
@@ -483,19 +572,36 @@ class MessageViewModel : ViewModel() {
             }
         }
 
-    fun sendMessage(content: String) {
+    fun sendMessage(content: String, disappearingSeconds: Int? = null) {
         val receiverId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val currentUserId = myId
         viewModelScope.launch {
-            val messageData = hashMapOf(
-                "senderId" to currentUserId,
-                "receiverId" to receiverId,
-                "content" to content,
-                "timestamp" to System.currentTimeMillis(),
-                "read" to false,
-                "reactions" to emptyMap<String, String>()
-            )
-            messagesCollection.add(messageData)
+            try {
+                // Si es un mensaje directo, verificamos si el destinatario nos tiene bloqueados
+                if (_selectedUser.value != null) {
+                    val blockedDoc = db.collection("users").document(receiverId)
+                        .collection("blocked").document(currentUserId).get().await()
+                    
+                    if (blockedDoc.exists()) {
+                        Log.d("BLOCK", "No se puede enviar: Estás bloqueado por el destinatario.")
+                        return@launch
+                    }
+                }
+
+                val expiresAt = disappearingSeconds?.let { System.currentTimeMillis() + it * 1000 }
+                val messageData = hashMapOf(
+                    "senderId" to currentUserId,
+                    "receiverId" to receiverId,
+                    "content" to content,
+                    "timestamp" to System.currentTimeMillis(),
+                    "read" to false,
+                    "reactions" to emptyMap<String, String>(),
+                    "expiresAt" to expiresAt
+                )
+                messagesCollection.add(messageData).await()
+            } catch (e: Exception) {
+                Log.e("FIRESTORE", "Error al enviar mensaje: ${e.message}")
+            }
         }
     }
 
@@ -507,5 +613,13 @@ class MessageViewModel : ViewModel() {
 
     private fun addCallToLog(log: CallLog) {
         db.collection("users").document(myId).collection("calls").add(log)
+    }
+
+    private fun Query.snapshots(): Flow<com.google.firebase.firestore.QuerySnapshot> = callbackFlow {
+        val registration = addSnapshotListener { snapshot, error ->
+            if (error != null) close(error)
+            else if (snapshot != null) trySend(snapshot)
+        }
+        awaitClose { registration.remove() }
     }
 }
