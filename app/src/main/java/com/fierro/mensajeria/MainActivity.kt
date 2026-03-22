@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -77,7 +78,6 @@ class MainActivity : FragmentActivity() {
     private var rtcEngine: RtcEngine? = null
     private var remoteUidState = mutableIntStateOf(0)
     
-    // Callback para el resultado de autenticación en dispositivos antiguos
     private var onAuthSuccessCallback: (() -> Unit)? = null
 
     private val authLauncher = registerForActivityResult(
@@ -181,33 +181,20 @@ class MainActivity : FragmentActivity() {
 
     private fun showBiometricPrompt(onSuccess: () -> Unit) {
         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-        
         if (!keyguardManager.isDeviceSecure) {
             onSuccess()
             return
         }
 
-        // DISPOSITIVOS ANTIGUOS (Android 8.1 o inferior como el S7 Edge)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             try {
                 onAuthSuccessCallback = onSuccess
-                val intent = keyguardManager.createConfirmDeviceCredentialIntent(
-                    "Seguridad de Mensajería", 
-                    "Confirma tu identidad para continuar"
-                )
-                if (intent != null) {
-                    authLauncher.launch(intent)
-                } else {
-                    onSuccess()
-                }
-            } catch (e: Exception) {
-                Log.e("BIOMETRIC", "Error con Keyguard: ${e.message}")
-                onSuccess()
-            }
+                val intent = keyguardManager.createConfirmDeviceCredentialIntent("Seguridad", "Confirma tu identidad")
+                if (intent != null) authLauncher.launch(intent) else onSuccess()
+            } catch (e: Exception) { onSuccess() }
             return
         }
 
-        // DISPOSITIVOS MODERNOS (Android 9+)
         val executor = ContextCompat.getMainExecutor(this)
         val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -216,29 +203,18 @@ class MainActivity : FragmentActivity() {
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
-                if (errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT || 
-                    errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE ||
-                    errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS) {
-                    onSuccess()
-                } else if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && 
-                    errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                    errorCode != BiometricPrompt.ERROR_CANCELED) {
-                    Toast.makeText(this@MainActivity, errString, Toast.LENGTH_SHORT).show()
-                }
+                if (errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT || errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE || errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS) onSuccess()
+                else if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_CANCELED) Toast.makeText(this@MainActivity, errString, Toast.LENGTH_SHORT).show()
             }
         })
 
-        val promptBuilder = BiometricPrompt.PromptInfo.Builder()
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Seguridad")
             .setSubtitle("Confirma tu identidad")
             .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+            .build()
 
-        try {
-            biometricPrompt.authenticate(promptBuilder.build())
-        } catch (e: Exception) {
-            Log.e("BIOMETRIC", "Fallo BiometricPrompt: ${e.message}")
-            onSuccess()
-        }
+        try { biometricPrompt.authenticate(promptInfo) } catch (e: Exception) { onSuccess() }
     }
 
     private fun setupAgora(channelName: String) {
@@ -276,23 +252,17 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     val authError by viewModel.authError.collectAsState()
-
     val colorScheme = MaterialTheme.colorScheme
     val primaryColor = colorScheme.primary
 
-    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-        .requestIdToken(context.getString(R.string.default_web_client_id))
-        .requestEmail()
-        .build()
+    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestIdToken(context.getString(R.string.default_web_client_id)).requestEmail().build()
     val googleSignInClient = GoogleSignIn.getClient(context, gso)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
         try {
             val account = task.getResult(ApiException::class.java)
             account.idToken?.let { viewModel.signInWithGoogle(it, onLoginSuccess) }
-        } catch (e: ApiException) {
-            Toast.makeText(context, "Error Google: ${e.statusCode}", Toast.LENGTH_LONG).show()
-        }
+        } catch (e: ApiException) { Toast.makeText(context, "Error Google: ${e.statusCode}", Toast.LENGTH_LONG).show() }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(colorScheme.background, colorScheme.surface)))) {
@@ -305,9 +275,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
             }
             Spacer(Modifier.height(24.dp))
             Text(text = if (isLoginMode) "Bienvenido de nuevo" else "Crea tu cuenta", color = colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            if (authError != null) {
-                Text(authError!!, color = Color.Red, modifier = Modifier.padding(vertical = 8.dp), textAlign = TextAlign.Center)
-            }
+            if (authError != null) Text(authError!!, color = Color.Red, modifier = Modifier.padding(vertical = 8.dp), textAlign = TextAlign.Center)
             Spacer(Modifier.height(24.dp))
             if (!isLoginMode) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Usuario", color = Color.Gray) }, textStyle = TextStyle(color = colorScheme.onSurface), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = primaryColor, unfocusedIndicatorColor = Color.Transparent))
@@ -321,9 +289,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
                 Text(if (isLoginMode) "Iniciar Sesión" else "Registrarse", color = Color.White, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = { isLoginMode = !isLoginMode; viewModel.clearError() }) {
-                Text(if (isLoginMode) "¿No tienes cuenta? Regístrate aquí" else "¿Ya tienes cuenta? Inicia sesión", color = primaryColor)
-            }
+            TextButton(onClick = { isLoginMode = !isLoginMode; viewModel.clearError() }) { Text(if (isLoginMode) "¿No tienes cuenta? Regístrate aquí" else "¿Ya tienes cuenta? Inicia sesión", color = primaryColor) }
             Spacer(Modifier.height(24.dp))
             Text("— O —", color = Color.Gray)
             Spacer(Modifier.height(24.dp))
@@ -358,16 +324,13 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
     var isViewingArchived by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var showGroupMembersDialog by remember { mutableStateOf<Group?>(null) }
     var userToMenu by remember { mutableStateOf<User?>(null) }
+    var groupToLeave by remember { mutableStateOf<Group?>(null) }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { if (it != null) viewModel.uploadProfilePicture(context, it) }
-
     val colorScheme = MaterialTheme.colorScheme
     val primaryColor = colorScheme.primary
 
-    BackHandler(enabled = startDrawerState.isOpen || endDrawerState.isOpen) {
-        scope.launch { startDrawerState.close(); endDrawerState.close() }
-    }
+    BackHandler(enabled = startDrawerState.isOpen || endDrawerState.isOpen) { scope.launch { startDrawerState.close(); endDrawerState.close() } }
 
     ModalNavigationDrawer(
         drawerState = startDrawerState,
@@ -376,11 +339,8 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
                     Box(Modifier.size(60.dp).clip(CircleShape).background(colorScheme.surface), contentAlignment = Alignment.Center) {
-                        if (!ownUser?.profilePicUrl.isNullOrEmpty()) {
-                            AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        } else {
-                            Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray)
-                        }
+                        if (!ownUser?.profilePicUrl.isNullOrEmpty()) AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray)
                     }
                     Spacer(Modifier.width(16.dp))
                     Text(ownUser?.displayName ?: "Mi Perfil", color = colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
@@ -405,7 +365,23 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                             HorizontalDivider()
                             LazyColumn {
                                 items(users.sortedBy { it.displayName }) { contact ->
-                                    NavigationDrawerItem(label = { Text(contact.displayName) }, selected = false, onClick = { viewModel.selectUser(contact); scope.launch { endDrawerState.close() } })
+                                    NavigationDrawerItem(
+                                        label = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Box(Modifier.size(32.dp).clip(CircleShape).background(Color.LightGray), contentAlignment = Alignment.Center) {
+                                                    if (!contact.profilePicUrl.isNullOrEmpty()) {
+                                                        AsyncImage(model = contact.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                                    } else {
+                                                        Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                                    }
+                                                }
+                                                Spacer(Modifier.width(12.dp))
+                                                Text(contact.displayName)
+                                            }
+                                        },
+                                        selected = false,
+                                        onClick = { viewModel.selectUser(contact); scope.launch { endDrawerState.close() } }
+                                    )
                                 }
                             }
                         }
@@ -413,14 +389,22 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 }
             ) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Scaffold(
-                        bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) }
-                    ) { padding ->
+                    Scaffold(bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) }) { padding ->
                         Column(modifier = Modifier.padding(padding)) {
                             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { scope.launch { startDrawerState.open() } }) { Icon(Icons.Default.Menu, null) }
-                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    Image(painter = painterResource(id = R.drawable.vee), contentDescription = null, modifier = Modifier.size(40.dp).clip(CircleShape))
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { 
+                                    Box(modifier = Modifier.size(50.dp).drawBehind {
+                                        val glowColor = primaryColor.copy(alpha = 0.4f)
+                                        drawCircle(brush = Brush.radialGradient(colors = listOf(glowColor, Color.Transparent), center = Offset(size.width / 2f, size.height * 0.75f), radius = size.width * 0.8f))
+                                    }.clip(CircleShape), contentAlignment = Alignment.Center) {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.vee), 
+                                            contentDescription = null, 
+                                            modifier = Modifier.size(40.dp).clip(CircleShape).border(1.dp, primaryColor.copy(alpha = 0.2f), CircleShape),
+                                            contentScale = ContentScale.Fit
+                                        ) 
+                                    }
                                 }
                                 IconButton(onClick = { scope.launch { endDrawerState.open() } }) { Icon(Icons.Default.Contacts, null) }
                             }
@@ -430,25 +414,22 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                             when (selectedTab) {
                                 0 -> {
                                     val filtered = users.filter { it.displayName.contains(searchText, true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) && lastMessages.containsKey(it.uid) }
+                                    val sorted = filtered.sortedWith(compareByDescending<User> { pinnedUserIds.contains(it.uid) }.thenByDescending { lastMessages[it.uid]?.timestamp ?: 0L })
                                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(filtered) { user ->
-                                            ChatItem(user, lastMessages[user.uid]?.content ?: "", "", unreadCounts[user.uid] ?: 0, pinnedUserIds.contains(user.uid), { viewModel.selectUser(user) }, { userToMenu = user })
+                                        items(sorted) { user ->
+                                            val lastMsg = lastMessages[user.uid]
+                                            val timeStr = lastMsg?.let { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(it.timestamp)) } ?: ""
+                                            ChatItem(user, lastMsg?.content ?: "", timeStr, unreadCounts[user.uid] ?: 0, pinnedUserIds.contains(user.uid), { viewModel.selectUser(user) }, { userToMenu = user })
                                         }
                                     }
                                 }
                                 1 -> {
                                     val filtered = groups.filter { it.name.contains(searchText, true) }
                                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(filtered) { group ->
-                                            GroupChatItem(group, lastMessages[group.id]?.content ?: "", "", unreadCounts[group.id] ?: 0, false, { viewModel.selectGroup(group) }, { showGroupMembersDialog = group })
-                                        }
+                                        items(filtered) { group -> GroupChatItem(group, lastMessages[group.id]?.content ?: "", "", unreadCounts[group.id] ?: 0, false, { viewModel.selectGroup(group) }, { groupToLeave = group }) }
                                     }
                                 }
-                                2 -> {
-                                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
-                                        items(callLogs) { log -> CallLogItem(log) }
-                                    }
-                                }
+                                2 -> { LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) { items(callLogs) { log -> CallLogItem(log) } } }
                             }
                         }
                     }
@@ -495,6 +476,23 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
             }
         )
     }
+
+    if (groupToLeave != null) {
+        AlertDialog(
+            onDismissRequest = { groupToLeave = null },
+            title = { Text("Salir del grupo") },
+            text = { Text("¿Estás seguro de que quieres salir del grupo \"${groupToLeave?.name}\"?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    groupToLeave?.let { viewModel.leaveGroup(it.id) }
+                    groupToLeave = null
+                }) { Text("Salir", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { groupToLeave = null }) { Text("Cancelar") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -521,14 +519,32 @@ fun CallLogItem(log: CallLog) {
 @Composable
 fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
-        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(50.dp).clip(CircleShape).background(Color.Gray))
+        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(56.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
+                if (!user.profilePicUrl.isNullOrEmpty()) {
+                    AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+            }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(user.displayName, fontWeight = FontWeight.Bold)
-                Text(subtitle, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(user.displayName, fontWeight = FontWeight.Bold, maxLines = 1, style = MaterialTheme.typography.bodyLarge)
+                    if (isPinned) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.PushPin, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Text(subtitle, maxLines = 1, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
             }
-            if (unreadCount > 0) Badge { Text(unreadCount.toString()) }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(time, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                if (unreadCount > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Badge(containerColor = MaterialTheme.colorScheme.primary) { Text(unreadCount.toString(), color = Color.White) }
+                }
+            }
         }
     }
 }
@@ -538,11 +554,13 @@ fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPin
 fun GroupChatItem(group: Group, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Groups, null, modifier = Modifier.size(50.dp))
+            Box(Modifier.size(50.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Groups, null, modifier = Modifier.size(30.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(group.name, fontWeight = FontWeight.Bold)
-                Text(subtitle, maxLines = 1)
+                Text(subtitle, maxLines = 1, color = Color.Gray)
             }
             if (unreadCount > 0) Badge { Text(unreadCount.toString()) }
         }

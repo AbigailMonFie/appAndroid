@@ -504,6 +504,25 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun leaveGroup(groupId: String) {
+        viewModelScope.launch {
+            try {
+                val groupRef = groupsCollection.document(groupId)
+                db.runTransaction { transaction ->
+                    val snapshot = transaction.get(groupRef)
+                    val members = snapshot.get("members") as? List<String> ?: emptyList()
+                    val updatedMembers = members.filter { it != myId }
+                    if (updatedMembers.isEmpty()) {
+                        transaction.delete(groupRef)
+                    } else {
+                        transaction.update(groupRef, "members", updatedMembers)
+                    }
+                }.await()
+                _selectedGroup.value = null
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error al salir del grupo: ${e.message}") }
+        }
+    }
+
     fun clearChat() {
         val user = _selectedUser.value
         val group = _selectedGroup.value
