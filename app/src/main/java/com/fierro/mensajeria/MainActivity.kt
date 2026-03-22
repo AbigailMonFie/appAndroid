@@ -1,16 +1,17 @@
 package com.fierro.mensajeria
 
+import android.app.KeyguardManager
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.view.SurfaceView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
@@ -52,7 +53,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -69,7 +69,6 @@ import com.google.android.gms.common.api.ApiException
 import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
-import io.agora.rtc2.video.VideoCanvas
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -77,6 +76,18 @@ import java.util.*
 class MainActivity : FragmentActivity() {
     private var rtcEngine: RtcEngine? = null
     private var remoteUidState = mutableIntStateOf(0)
+    
+    // Callback para el resultado de autenticación en dispositivos antiguos
+    private var onAuthSuccessCallback: (() -> Unit)? = null
+
+    private val authLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            onAuthSuccessCallback?.invoke()
+            onAuthSuccessCallback = null
+        }
+    }
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -126,11 +137,6 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                LaunchedEffect(selectedUser, selectedGroup) {
-                    selectedUser?.let { chatViewModel.markMessagesAsRead(it.uid, false) }
-                    selectedGroup?.let { chatViewModel.markMessagesAsRead(it.id, true) }
-                }
-
                 Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     if (currentUser == null) {
                         LoginScreen(onLoginSuccess = { chatViewModel.onUserAuthenticated() }, viewModel = authViewModel)
@@ -146,7 +152,7 @@ class MainActivity : FragmentActivity() {
                                 Text("Acceso Protegido", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground)
                                 Spacer(Modifier.height(24.dp))
                                 Button(onClick = { showBiometricPrompt { isAppUnlocked = true } }) {
-                                    Text("Desbloquear con Biometría")
+                                    Text("Desbloquear aplicación")
                                 }
                             }
                         }
@@ -163,18 +169,9 @@ class MainActivity : FragmentActivity() {
                     }
 
                     currentCall?.let { call ->
-                        CallOverlay(
-                            call = call,
-                            rtcEngine = rtcEngine,
-                            remoteUid = remoteUidState.intValue,
-                            onAccept = {
-                                setupAgora(call.receiverId)
-                                chatViewModel.acceptCall()
-                            },
-                            onReject = {
-                                leaveChannel()
-                                chatViewModel.endCall()
-                            }
+                        CallOverlay(call, rtcEngine, remoteUidState.intValue, 
+                            onAccept = { setupAgora(call.receiverId); chatViewModel.acceptCall() },
+                            onReject = { leaveChannel(); chatViewModel.endCall() }
                         )
                     }
                 }
@@ -183,6 +180,34 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showBiometricPrompt(onSuccess: () -> Unit) {
+        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+        
+        if (!keyguardManager.isDeviceSecure) {
+            onSuccess()
+            return
+        }
+
+        // DISPOSITIVOS ANTIGUOS (Android 8.1 o inferior como el S7 Edge)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            try {
+                onAuthSuccessCallback = onSuccess
+                val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+                    "Seguridad de Mensajería", 
+                    "Confirma tu identidad para continuar"
+                )
+                if (intent != null) {
+                    authLauncher.launch(intent)
+                } else {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                Log.e("BIOMETRIC", "Error con Keyguard: ${e.message}")
+                onSuccess()
+            }
+            return
+        }
+
+        // DISPOSITIVOS MODERNOS (Android 9+)
         val executor = ContextCompat.getMainExecutor(this)
         val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -191,19 +216,29 @@ class MainActivity : FragmentActivity() {
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
-                if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
+                if (errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT || 
+                    errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE ||
+                    errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS) {
+                    onSuccess()
+                } else if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && 
+                    errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                    errorCode != BiometricPrompt.ERROR_CANCELED) {
                     Toast.makeText(this@MainActivity, errString, Toast.LENGTH_SHORT).show()
                 }
             }
         })
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Bloqueo de Mensajería")
-            .setSubtitle("Usa tu huella o patrón para acceder")
+        val promptBuilder = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Seguridad")
+            .setSubtitle("Confirma tu identidad")
             .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
-            .build()
 
-        biometricPrompt.authenticate(promptInfo)
+        try {
+            biometricPrompt.authenticate(promptBuilder.build())
+        } catch (e: Exception) {
+            Log.e("BIOMETRIC", "Fallo BiometricPrompt: ${e.message}")
+            onSuccess()
+        }
     }
 
     private fun setupAgora(channelName: String) {
@@ -264,108 +299,35 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
         Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(modifier = Modifier.size(150.dp).drawBehind {
                 val glowColor = primaryColor.copy(alpha = 0.4f)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(glowColor, Color.Transparent),
-                        center = Offset(size.width / 2f, size.height * 0.75f),
-                        radius = size.width * 0.8f
-                    )
-                )
+                drawCircle(brush = Brush.radialGradient(colors = listOf(glowColor, Color.Transparent), center = Offset(size.width / 2f, size.height * 0.75f), radius = size.width * 0.8f))
             }.clip(CircleShape), contentAlignment = Alignment.Center) {
-                Image(
-                    painter = painterResource(id = R.drawable.vee),
-                    contentDescription = "Logo",
-                    modifier = Modifier.size(120.dp).clip(CircleShape).border(1.dp, primaryColor.copy(alpha = 0.2f), CircleShape),
-                    contentScale = ContentScale.Fit
-                )
+                Image(painter = painterResource(id = R.drawable.vee), contentDescription = "Logo", modifier = Modifier.size(120.dp).clip(CircleShape).border(1.dp, primaryColor.copy(alpha = 0.2f), CircleShape), contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
-            Text(
-                text = if (isLoginMode) "Bienvenido de nuevo" else "Crea tu cuenta",
-                color = colorScheme.onBackground,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Text(text = if (isLoginMode) "Bienvenido de nuevo" else "Crea tu cuenta", color = colorScheme.onBackground, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             if (authError != null) {
                 Text(authError!!, color = Color.Red, modifier = Modifier.padding(vertical = 8.dp), textAlign = TextAlign.Center)
             }
             Spacer(Modifier.height(24.dp))
             if (!isLoginMode) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Usuario", color = Color.Gray) },
-                    textStyle = TextStyle(color = colorScheme.onSurface),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = TextFieldDefaults.colors(
-                        unfocusedContainerColor = colorScheme.surface,
-                        focusedContainerColor = colorScheme.surface,
-                        focusedIndicatorColor = primaryColor,
-                        unfocusedIndicatorColor = Color.Transparent
-                    )
-                )
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Usuario", color = Color.Gray) }, textStyle = TextStyle(color = colorScheme.onSurface), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = primaryColor, unfocusedIndicatorColor = Color.Transparent))
                 Spacer(Modifier.height(12.dp))
             }
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Email", color = Color.Gray) },
-                textStyle = TextStyle(color = colorScheme.onSurface),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = TextFieldDefaults.colors(
-                    unfocusedContainerColor = colorScheme.surface,
-                    focusedContainerColor = colorScheme.surface,
-                    focusedIndicatorColor = primaryColor,
-                    unfocusedIndicatorColor = Color.Transparent
-                )
-            )
+            OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email", color = Color.Gray) }, textStyle = TextStyle(color = colorScheme.onSurface), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = primaryColor, unfocusedIndicatorColor = Color.Transparent))
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Contraseña", color = Color.Gray) },
-                textStyle = TextStyle(color = colorScheme.onSurface),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                visualTransformation = PasswordVisualTransformation(),
-                colors = TextFieldDefaults.colors(
-                    unfocusedContainerColor = colorScheme.surface,
-                    focusedContainerColor = colorScheme.surface,
-                    focusedIndicatorColor = primaryColor,
-                    unfocusedIndicatorColor = Color.Transparent
-                )
-            )
+            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña", color = Color.Gray) }, textStyle = TextStyle(color = colorScheme.onSurface), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), visualTransformation = PasswordVisualTransformation(), colors = TextFieldDefaults.colors(unfocusedContainerColor = colorScheme.surface, focusedContainerColor = colorScheme.surface, focusedIndicatorColor = primaryColor, unfocusedIndicatorColor = Color.Transparent))
             Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = {
-                    if (isLoginMode) viewModel.login(email, password, onLoginSuccess)
-                    else viewModel.register(email, password, name, onLoginSuccess)
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = primaryColor)
-            ) {
+            Button(onClick = { if (isLoginMode) viewModel.login(email, password, onLoginSuccess) else viewModel.register(email, password, name, onLoginSuccess) }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = primaryColor)) {
                 Text(if (isLoginMode) "Iniciar Sesión" else "Registrarse", color = Color.White, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = { isLoginMode = !isLoginMode; viewModel.clearError() }) {
-                Text(
-                    if (isLoginMode) "¿No tienes cuenta? Regístrate aquí" else "¿Ya tienes cuenta? Inicia sesión",
-                    color = primaryColor
-                )
+                Text(if (isLoginMode) "¿No tienes cuenta? Regístrate aquí" else "¿Ya tienes cuenta? Inicia sesión", color = primaryColor)
             }
             Spacer(Modifier.height(24.dp))
             Text("— O —", color = Color.Gray)
             Spacer(Modifier.height(24.dp))
-            OutlinedButton(
-                onClick = { launcher.launch(googleSignInClient.signInIntent) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = colorScheme.onBackground),
-                border = ButtonDefaults.outlinedButtonBorder(true).copy(width = 1.dp)
-            ) {
+            OutlinedButton(onClick = { launcher.launch(googleSignInClient.signInIntent) }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = colorScheme.onBackground), border = ButtonDefaults.outlinedButtonBorder(true).copy(width = 1.dp)) {
                 Icon(Icons.Default.AccountCircle, null, Modifier.padding(end = 8.dp))
                 Text("Continuar con Google")
             }
@@ -375,13 +337,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UserListScreen(
-    viewModel: MessageViewModel, 
-    authViewModel: AuthViewModel, 
-    isDarkMode: Boolean, 
-    onThemeToggle: () -> Unit,
-    onBiometricVerify: (onSuccess: () -> Unit) -> Unit = {}
-) {
+fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, isDarkMode: Boolean, onThemeToggle: () -> Unit, onBiometricVerify: (onSuccess: () -> Unit) -> Unit = {}) {
     val users by viewModel.users.collectAsState()
     val groups by viewModel.groups.collectAsState()
     val archivedUserIds by viewModel.archivedUserIds.collectAsState()
@@ -410,16 +366,11 @@ fun UserListScreen(
     val primaryColor = colorScheme.primary
 
     BackHandler(enabled = startDrawerState.isOpen || endDrawerState.isOpen) {
-        scope.launch {
-            startDrawerState.close()
-            endDrawerState.close()
-        }
+        scope.launch { startDrawerState.close(); endDrawerState.close() }
     }
 
-    // Panel de Menú Principal (Externo + LTR para gesto desde la izquierda)
     ModalNavigationDrawer(
         drawerState = startDrawerState,
-        gesturesEnabled = true,
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = colorScheme.background) {
                 Spacer(Modifier.height(16.dp))
@@ -435,47 +386,26 @@ fun UserListScreen(
                     Text(ownUser?.displayName ?: "Mi Perfil", color = colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
                 }
                 HorizontalDivider(color = colorScheme.onBackground.copy(alpha = 0.1f))
-                NavigationDrawerItem(label = { Text("Nuevo Grupo", color = colorScheme.onBackground) }, selected = false, onClick = { showCreateGroupDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.GroupAdd, null, tint = colorScheme.onBackground) })
-                NavigationDrawerItem(label = { Text("Ajustes", color = colorScheme.onBackground) }, selected = false, onClick = { showSettingsDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.Settings, null, tint = colorScheme.onBackground) })
-                NavigationDrawerItem(label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro", color = colorScheme.onBackground) }, selected = false, onClick = { onThemeToggle() }, icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null, tint = colorScheme.onBackground) })
+                NavigationDrawerItem(label = { Text("Nuevo Grupo") }, selected = false, onClick = { showCreateGroupDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.GroupAdd, null) })
+                NavigationDrawerItem(label = { Text("Ajustes") }, selected = false, onClick = { showSettingsDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.Settings, null) })
+                NavigationDrawerItem(label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro") }, selected = false, onClick = { onThemeToggle() }, icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null) })
                 Spacer(Modifier.weight(1f))
-                NavigationDrawerItem(label = { Text("Cerrar Sesión", color = Color.Red.copy(alpha = 0.7f)) }, selected = false, onClick = { authViewModel.logout(); viewModel.clearData(); scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color.Red.copy(alpha = 0.7f)) })
+                NavigationDrawerItem(label = { Text("Cerrar Sesión", color = Color.Red) }, selected = false, onClick = { authViewModel.logout(); viewModel.clearData(); scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color.Red) })
                 Spacer(Modifier.height(16.dp))
             }
         }
     ) {
-        // Panel de Contactos (Interno + RTL para gesto desde la derecha)
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             ModalNavigationDrawer(
                 drawerState = endDrawerState,
-                gesturesEnabled = true,
                 drawerContent = {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         ModalDrawerSheet(drawerContainerColor = colorScheme.background) {
-                            Spacer(Modifier.height(16.dp))
-                            Text("Contactos", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge, color = colorScheme.onBackground)
-                            HorizontalDivider(color = colorScheme.onBackground.copy(alpha = 0.1f))
-                            val allContacts = users.sortedBy { it.displayName.lowercase() }
-                            LazyColumn(Modifier.fillMaxSize()) {
-                                items(allContacts) { contact ->
-                                    NavigationDrawerItem(
-                                        label = { Text(contact.displayName, color = colorScheme.onBackground) },
-                                        selected = false,
-                                        onClick = {
-                                            viewModel.selectUser(contact)
-                                            scope.launch { endDrawerState.close() }
-                                        },
-                                        icon = {
-                                            Box(Modifier.size(32.dp).clip(CircleShape).background(colorScheme.surface), contentAlignment = Alignment.Center) {
-                                                if (!contact.profilePicUrl.isNullOrEmpty()) {
-                                                    AsyncImage(model = contact.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                                } else {
-                                                    Icon(Icons.Default.Person, null, modifier = Modifier.size(20.dp), tint = Color.Gray)
-                                                }
-                                            }
-                                        },
-                                        colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent)
-                                    )
+                            Text("Contactos", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
+                            HorizontalDivider()
+                            LazyColumn {
+                                items(users.sortedBy { it.displayName }) { contact ->
+                                    NavigationDrawerItem(label = { Text(contact.displayName) }, selected = false, onClick = { viewModel.selectUser(contact); scope.launch { endDrawerState.close() } })
                                 }
                             }
                         }
@@ -484,90 +414,39 @@ fun UserListScreen(
             ) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Scaffold(
-                        bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) },
-                        containerColor = colorScheme.background
+                        bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) }
                     ) { padding ->
-                        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+                        Column(modifier = Modifier.padding(padding)) {
                             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { scope.launch { startDrawerState.open() } }) { Icon(Icons.Default.Menu, null, tint = colorScheme.onBackground) }
+                                IconButton(onClick = { scope.launch { startDrawerState.open() } }) { Icon(Icons.Default.Menu, null) }
                                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    Box(modifier = Modifier.size(50.dp).drawBehind {
-                                        val glowColor = primaryColor.copy(alpha = 0.4f)
-                                        drawCircle(brush = Brush.radialGradient(colors = listOf(glowColor, Color.Transparent), center = Offset(size.width / 2f, size.height * 0.75f), radius = size.width * 0.8f))
-                                    }.clip(CircleShape), contentAlignment = Alignment.Center) {
-                                        Image(painter = painterResource(id = R.drawable.vee), contentDescription = "Logo", modifier = Modifier.size(38.dp).clip(CircleShape).border(1.dp, primaryColor.copy(alpha = 0.1f), CircleShape), contentScale = ContentScale.Fit)
-                                    }
+                                    Image(painter = painterResource(id = R.drawable.vee), contentDescription = null, modifier = Modifier.size(40.dp).clip(CircleShape))
                                 }
-                                IconButton(onClick = { scope.launch { endDrawerState.open() } }) { Icon(Icons.Default.Contacts, null, tint = colorScheme.onBackground) }
+                                IconButton(onClick = { scope.launch { endDrawerState.open() } }) { Icon(Icons.Default.Contacts, null) }
                             }
-                            Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(56.dp), shape = RoundedCornerShape(28.dp), color = colorScheme.surface.copy(alpha = 0.5f), border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.onSurface.copy(alpha = 0.2f))) {
-                                TextField(value = searchText, onValueChange = { searchText = it }, modifier = Modifier.fillMaxSize(), placeholder = { Text("Buscar...", color = Color.Gray, fontSize = 16.sp) }, trailingIcon = { Icon(Icons.Default.Search, null, tint = primaryColor) }, colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = colorScheme.onSurface, unfocusedTextColor = colorScheme.onSurface), textStyle = TextStyle(fontSize = 16.sp), singleLine = true)
+                            Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(28.dp), color = colorScheme.surface) {
+                                TextField(value = searchText, onValueChange = { searchText = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Buscar...") }, trailingIcon = { Icon(Icons.Default.Search, null) }, colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                             }
                             when (selectedTab) {
                                 0 -> {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = false }) {
-                                            Text("Chats", color = if (!isViewingArchived) colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium)
-                                            if (!isViewingArchived) {
-                                                Spacer(Modifier.height(4.dp))
-                                                Box(Modifier.width(40.dp).height(2.dp).background(primaryColor))
-                                            }
-                                        }
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { isViewingArchived = true }) {
-                                            Text("Archivado", color = if (isViewingArchived) colorScheme.onBackground else Color.Gray, fontWeight = FontWeight.Medium)
-                                            if (isViewingArchived) {
-                                                Spacer(Modifier.height(4.dp))
-                                                Box(Modifier.width(40.dp).height(2.dp).background(primaryColor))
-                                            }
-                                        }
-                                    }
-                                    val filteredUsers = users.filter {
-                                        it.displayName.contains(searchText, ignoreCase = true) &&
-                                                (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) &&
-                                                lastMessages.containsKey(it.uid)
-                                    }.sortedWith(compareByDescending<User> { pinnedUserIds.contains(it.uid) }.thenByDescending { lastMessages[it.uid]?.timestamp ?: 0L })
-
+                                    val filtered = users.filter { it.displayName.contains(searchText, true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) && lastMessages.containsKey(it.uid) }
                                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(filteredUsers) { user ->
-                                            val lastMsg = lastMessages[user.uid]
-                                            ChatItem(
-                                                user = user,
-                                                subtitle = lastMsg?.content ?: "Sin mensajes",
-                                                time = if (lastMsg != null) SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(lastMsg.timestamp)) else "",
-                                                unreadCount = unreadCounts[user.uid] ?: 0,
-                                                isPinned = pinnedUserIds.contains(user.uid),
-                                                onClick = { viewModel.selectUser(user) },
-                                                onLongClick = { userToMenu = user }
-                                            )
+                                        items(filtered) { user ->
+                                            ChatItem(user, lastMessages[user.uid]?.content ?: "", "", unreadCounts[user.uid] ?: 0, pinnedUserIds.contains(user.uid), { viewModel.selectUser(user) }, { userToMenu = user })
                                         }
                                     }
                                 }
                                 1 -> {
-                                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Tus Grupos", color = colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                                        IconButton(onClick = { showCreateGroupDialog = true }, modifier = Modifier.background(primaryColor, CircleShape)) {
-                                            Icon(Icons.Default.Add, null, tint = Color.White)
-                                        }
-                                    }
-                                    val filteredGroups = groups.filter { it.name.contains(searchText, ignoreCase = true) }.sortedByDescending { lastMessages[it.id]?.timestamp ?: 0L }
+                                    val filtered = groups.filter { it.name.contains(searchText, true) }
                                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(filteredGroups) { group ->
-                                            GroupChatItem(
-                                                group = group,
-                                                subtitle = lastMessages[group.id]?.content ?: "${group.members.size} miembros",
-                                                time = if (lastMessages[group.id] != null) SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(lastMessages[group.id]!!.timestamp)) else "",
-                                                unreadCount = unreadCounts[group.id] ?: 0,
-                                                isPinned = false,
-                                                onClick = { viewModel.selectGroup(group) },
-                                                onLongClick = { showGroupMembersDialog = group }
-                                            )
+                                        items(filtered) { group ->
+                                            GroupChatItem(group, lastMessages[group.id]?.content ?: "", "", unreadCounts[group.id] ?: 0, false, { viewModel.selectGroup(group) }, { showGroupMembersDialog = group })
                                         }
                                     }
                                 }
                                 2 -> {
-                                    Spacer(Modifier.height(16.dp))
-                                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(callLogs) { log -> CallLogItem(log = log) }
+                                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
+                                        items(callLogs) { log -> CallLogItem(log) }
                                     }
                                 }
                             }
@@ -578,184 +457,40 @@ fun UserListScreen(
         }
     }
 
-    if (showGroupMembersDialog != null) {
-        val group = showGroupMembersDialog!!
-        AlertDialog(
-            onDismissRequest = { showGroupMembersDialog = null },
-            title = { Text("Miembros: ${group.name}") },
-            text = {
-                Column {
-                    group.members.forEach { memberId ->
-                        val name = if (memberId == viewModel.myId) "Tú" else users.find { it.uid == memberId }?.displayName ?: "Usuario"
-                        Text("- $name", color = colorScheme.onSurface)
-                    }
-                }
-            },
-            containerColor = colorScheme.surface,
-            confirmButton = {
-                if (group.adminId == viewModel.myId) {
-                    TextButton(onClick = { viewModel.dissolveGroup(group.id); showGroupMembersDialog = null }) {
-                        Text("Disolver", color = Color.Red)
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showGroupMembersDialog = null }) {
-                    Text("Cerrar", color = colorScheme.onSurface)
-                }
-            }
-        )
-    }
-
-    if (showCreateGroupDialog) {
-        var groupName by remember { mutableStateOf("") }
-        val selectedMembers = remember { mutableStateListOf<String>() }
-        AlertDialog(
-            onDismissRequest = { showCreateGroupDialog = false },
-            containerColor = colorScheme.surface,
-            title = { Text("Crear Nuevo Grupo", color = colorScheme.onSurface) },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = groupName,
-                        onValueChange = { groupName = it },
-                        label = { Text("Nombre del grupo") },
-                        modifier = Modifier.border(1.dp, colorScheme.onSurface.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
-                        colors = TextFieldDefaults.colors(
-                            unfocusedContainerColor = colorScheme.background,
-                            focusedContainerColor = colorScheme.background,
-                            focusedTextColor = colorScheme.onBackground,
-                            unfocusedTextColor = colorScheme.onBackground
-                        )
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LazyColumn(Modifier.height(200.dp)) {
-                        items(users) { user ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    if (selectedMembers.contains(user.uid)) selectedMembers.remove(user.uid)
-                                    else selectedMembers.add(user.uid)
-                                }.padding(8.dp)
-                            ) {
-                                Checkbox(checked = selectedMembers.contains(user.uid), onCheckedChange = null)
-                                Text(user.displayName, color = colorScheme.onSurface)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (groupName.isNotBlank()) {
-                            viewModel.createGroup(groupName, selectedMembers.toList())
-                            showCreateGroupDialog = false
-                            Toast.makeText(context, "Grupo creado", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor)
-                ) {
-                    Text("Crear")
-                }
-            }
-        )
-    }
-
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
-            containerColor = colorScheme.surface,
-            title = { Text("Ajustes de Perfil", color = colorScheme.onSurface) },
+            title = { Text("Ajustes") },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) {
-                        if (!ownUser?.profilePicUrl.isNullOrEmpty()) {
-                            AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        } else {
-                            Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = colorScheme.onBackground)
-                        }
+                    Box(Modifier.size(80.dp).clip(CircleShape).background(colorScheme.surface), contentAlignment = Alignment.Center) {
+                        if (!ownUser?.profilePicUrl.isNullOrEmpty()) AsyncImage(model = ownUser?.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp))
                     }
-                    Button(onClick = { galleryLauncher.launch("image/*") }, modifier = Modifier.padding(top = 16.dp), colors = ButtonDefaults.buttonColors(containerColor = primaryColor)) {
-                        Text("Cambiar Foto de Perfil")
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                        Icon(Icons.Default.Fingerprint, null, tint = colorScheme.onSurface)
-                        Spacer(Modifier.width(16.dp))
-                        Text("Bloqueo con huella o patrón", modifier = Modifier.weight(1f), color = colorScheme.onSurface)
-                        Switch(
-                            checked = isBiometricEnabled ?: false,
-                            onCheckedChange = { enabled ->
-                                viewModel.toggleBiometric(enabled, onPromptRequired = {
-                                    onBiometricVerify {
-                                        viewModel.updateBiometricSettings(true)
-                                    }
-                                })
-                            }
-                        )
+                    Button(onClick = { galleryLauncher.launch("image/*") }) { Text("Cambiar foto") }
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Bloqueo de aplicación", modifier = Modifier.weight(1f))
+                        Switch(checked = isBiometricEnabled ?: false, onCheckedChange = { enabled ->
+                            viewModel.toggleBiometric(enabled, onPromptRequired = { onBiometricVerify { viewModel.updateBiometricSettings(true) } })
+                        })
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showSettingsDialog = false }) {
-                    Text("Cerrar", color = colorScheme.onSurface)
-                }
-            }
+            confirmButton = { TextButton(onClick = { showSettingsDialog = false }) { Text("Cerrar") } }
         )
     }
 
     if (userToMenu != null) {
-        val isArchived = archivedUserIds.contains(userToMenu?.uid)
-        val isPinned = pinnedUserIds.contains(userToMenu?.uid)
-        val isBlocked = blockedUserIds.contains(userToMenu?.uid)
         AlertDialog(
             onDismissRequest = { userToMenu = null },
-            containerColor = colorScheme.surface,
-            confirmButton = {
-                TextButton(onClick = { userToMenu = null }) {
-                    Text("Cerrar", color = colorScheme.onSurface)
-                }
-            },
-            title = { Text("Opciones de chat", color = colorScheme.onSurface) },
+            confirmButton = {},
+            title = { Text("Opciones") },
             text = {
                 Column {
-                    ListItem(
-                        headlineContent = { Text(if (isArchived) "Desarchivar" else "Archivar", color = colorScheme.onSurface) },
-                        leadingContent = { Icon(Icons.Default.Archive, null, tint = colorScheme.onSurface) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable {
-                            viewModel.toggleArchive(userToMenu!!.uid)
-                            userToMenu = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar", color = colorScheme.onSurface) },
-                        leadingContent = { Icon(Icons.Default.PushPin, null, tint = colorScheme.onSurface) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable {
-                            viewModel.togglePin(userToMenu!!.uid)
-                            userToMenu = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text(if (isBlocked) "Desbloquear" else "Bloquear", color = Color.Red.copy(alpha = 0.7f)) },
-                        leadingContent = { Icon(Icons.Default.Block, null, tint = Color.Red.copy(alpha = 0.7f)) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable {
-                            viewModel.toggleBlock(userToMenu!!.uid)
-                            userToMenu = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Eliminar contenido", color = Color.Red.copy(alpha = 0.7f)) },
-                        leadingContent = { Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.7f)) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable {
-                            viewModel.clearChat()
-                            userToMenu = null
-                        }
-                    )
+                    ListItem(headlineContent = { Text("Archivar") }, modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid); userToMenu = null })
+                    ListItem(headlineContent = { Text("Fijar") }, modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid); userToMenu = null })
+                    ListItem(headlineContent = { Text("Bloquear") }, modifier = Modifier.clickable { viewModel.toggleBlock(userToMenu!!.uid); userToMenu = null })
                 }
             }
         )
@@ -764,40 +499,13 @@ fun UserListScreen(
 
 @Composable
 fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept: () -> Unit, onReject: () -> Unit) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(modifier = Modifier.fillMaxSize(), color = colorScheme.background.copy(alpha = 0.95f)) {
-        Box(Modifier.fillMaxSize()) {
-            if (remoteUid != 0 && call.type == "VIDEO") {
-                AndroidView(factory = { SurfaceView(it).apply { rtcEngine?.setupRemoteVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, remoteUid)) } }, modifier = Modifier.fillMaxSize())
-            }
-            Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Spacer(Modifier.height(64.dp))
-                    if ((call.status == "ONGOING" || call.status == "CALLING") && call.type == "VIDEO") {
-                        AndroidView(factory = { SurfaceView(it).apply { rtcEngine?.setupLocalVideo(VideoCanvas(this, VideoCanvas.RENDER_MODE_HIDDEN, 0)) } }, modifier = Modifier.size(150.dp, 200.dp).clip(RoundedCornerShape(24.dp)).background(Color.Black))
-                    } else {
-                        Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(colorScheme.surface), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.Gray)
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    Text(call.callerName, color = colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = when(call.status) {
-                            "RINGING" -> "Llamada entrante..."
-                            "CALLING" -> "Llamando..."
-                            else -> "En llamada activa"
-                        },
-                        color = colorScheme.secondary,
-                        fontSize = 18.sp
-                    )
-                }
-                Row(Modifier.fillMaxWidth().padding(bottom = 64.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    if (call.status == "RINGING") {
-                        FloatingActionButton(onClick = onAccept, containerColor = Color(0xFF4CAF50), contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.Call, null) }
-                    }
-                    FloatingActionButton(onClick = onReject, containerColor = Color(0xFFFF5252), contentColor = Color.White, shape = CircleShape) { Icon(Icons.Default.CallEnd, null) }
-                }
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) {
+        Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(call.callerName, style = MaterialTheme.typography.headlineLarge)
+            Text(call.status)
+            Row {
+                if (call.status == "RINGING") Button(onClick = onAccept) { Text("Aceptar") }
+                Button(onClick = onReject) { Text("Colgar") }
             }
         }
     }
@@ -805,58 +513,22 @@ fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept:
 
 @Composable
 fun CallLogItem(log: CallLog) {
-    val colorScheme = MaterialTheme.colorScheme
     val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(log.timestamp))
-    Surface(color = colorScheme.surface, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (log.isOutgoing) Icons.AutoMirrored.Filled.CallMade else Icons.AutoMirrored.Filled.CallReceived,
-                null,
-                tint = if (log.isOutgoing) Color.Green else Color.Red
-            )
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(log.partnerName, color = colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                Text(time, color = Color.Gray, fontSize = 12.sp)
-            }
-            Icon(Icons.Default.Call, null, tint = colorScheme.primary)
-        }
-    }
+    ListItem(headlineContent = { Text(log.partnerName) }, supportingContent = { Text(time) }, leadingContent = { Icon(if (log.isOutgoing) Icons.AutoMirrored.Filled.CallMade else Icons.AutoMirrored.Filled.CallReceived, null) })
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-        Row(modifier = Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(56.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) {
-                if (!user.profilePicUrl.isNullOrEmpty()) {
-                    AsyncImage(model = user.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                } else {
-                    Icon(Icons.Default.Person, null, modifier = Modifier.size(36.dp), tint = Color.Gray)
-                }
-            }
+    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(50.dp).clip(CircleShape).background(Color.Gray))
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(user.displayName, color = colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    if (isPinned) {
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = colorScheme.secondary)
-                    }
-                }
-                Text(subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1)
+                Text(user.displayName, fontWeight = FontWeight.Bold)
+                Text(subtitle, maxLines = 1)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                if (time.isNotEmpty()) Text(time, color = Color.Gray, fontSize = 12.sp)
-                if (unreadCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(colorScheme.primary), contentAlignment = Alignment.Center) {
-                        Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
+            if (unreadCount > 0) Badge { Text(unreadCount.toString()) }
         }
     }
 }
@@ -864,59 +536,24 @@ fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPin
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupChatItem(group: Group, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), color = colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-        Row(modifier = Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(56.dp).clip(CircleShape).background(colorScheme.background), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Groups, null, modifier = Modifier.size(36.dp), tint = Color.Gray)
-            }
+    Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Groups, null, modifier = Modifier.size(50.dp))
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(group.name, color = colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    if (isPinned) {
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Default.PushPin, null, Modifier.size(14.dp), tint = colorScheme.secondary)
-                    }
-                }
-                Text(subtitle, color = Color.Gray, fontSize = 14.sp, maxLines = 1)
+                Text(group.name, fontWeight = FontWeight.Bold)
+                Text(subtitle, maxLines = 1)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                if (time.isNotEmpty()) Text(time, color = Color.Gray, fontSize = 12.sp)
-                if (unreadCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(colorScheme.primary), contentAlignment = Alignment.Center) {
-                        Text(unreadCount.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
+            if (unreadCount > 0) Badge { Text(unreadCount.toString()) }
         }
     }
 }
 
 @Composable
 fun BottomNavigationBar(selectedItem: Int, onItemSelected: (Int) -> Unit) {
-    val colorScheme = MaterialTheme.colorScheme
-    NavigationBar(containerColor = colorScheme.background, tonalElevation = 0.dp) {
-        val items = listOf(
-            Triple("Chats", Icons.AutoMirrored.Filled.Chat, 0),
-            Triple("Grupos", Icons.Default.Groups, 1),
-            Triple("Llamadas", Icons.Default.Call, 2)
-        )
-        items.forEach { (label, icon, index) ->
-            NavigationBarItem(
-                selected = selectedItem == index,
-                onClick = { onItemSelected(index) },
-                icon = { Icon(icon, label) },
-                label = { Text(label, fontSize = 10.sp) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = colorScheme.primary,
-                    unselectedIconColor = Color.Gray,
-                    selectedTextColor = colorScheme.primary,
-                    unselectedTextColor = Color.Gray,
-                    indicatorColor = colorScheme.primary.copy(alpha = 0.1f)
-                )
-            )
-        }
+    NavigationBar {
+        NavigationBarItem(selected = selectedItem == 0, onClick = { onItemSelected(0) }, icon = { Icon(Icons.AutoMirrored.Filled.Chat, null) }, label = { Text("Chats") })
+        NavigationBarItem(selected = selectedItem == 1, onClick = { onItemSelected(1) }, icon = { Icon(Icons.Default.Groups, null) }, label = { Text("Grupos") })
+        NavigationBarItem(selected = selectedItem == 2, onClick = { onItemSelected(2) }, icon = { Icon(Icons.Default.Call, null) }, label = { Text("Llamadas") })
     }
 }
