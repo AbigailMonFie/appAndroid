@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,7 +87,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            var isDarkMode by remember { mutableStateOf(true) }
+            // Se usa rememberSaveable para que el estado persista al girar la pantalla
+            var isDarkMode by rememberSaveable { mutableStateOf(true) }
             MensajeriaTheme(darkTheme = isDarkMode) {
                 val authViewModel: AuthViewModel = viewModel()
                 val chatViewModel: MessageViewModel = viewModel()
