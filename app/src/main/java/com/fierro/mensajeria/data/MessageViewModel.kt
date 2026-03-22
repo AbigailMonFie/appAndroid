@@ -1,10 +1,7 @@
 package com.fierro.mensajeria.data
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,18 +9,20 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 class MessageViewModel : ViewModel() {
 
     private val db = FirebaseFirestore.getInstance()
     private val auth = FirebaseAuth.getInstance()
+    private val storage = FirebaseStorage.getInstance() // Referencia a Firebase Storage (Bucket)
+    
     private val messagesCollection = db.collection("messages")
     private val usersCollection = db.collection("users")
     private val groupsCollection = db.collection("groups")
@@ -158,7 +157,6 @@ class MessageViewModel : ViewModel() {
         val currentUserId = myId
         if (currentUserId == "anonimo") return
 
-        // Simplificamos la query para evitar problemas de índices y asegurar que encuentre los mensajes
         val query = if (isGroup) {
             messagesCollection
                 .whereEqualTo("receiverId", chatId)
@@ -174,7 +172,6 @@ class MessageViewModel : ViewModel() {
                 var updated = false
                 for (document in documents) {
                     val msg = document.toObject(FirebaseMessage::class.java)
-                    // Filtramos manualmente aquí para estar 100% seguros y no depender de índices complejos
                     if (!msg.read && msg.senderId != currentUserId) {
                         batch.update(document.reference, "read", true)
                         updated = true
@@ -245,17 +242,31 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Sube la imagen a Firebase Storage (Bucket de Google Cloud)
+     * y guarda la URL pública en el perfil del usuario en Firestore.
+     */
     fun uploadProfilePicture(context: Context, uri: Uri) {
+        if (myId == "anonimo") return
+        
         viewModelScope.launch {
             try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                val outputStream = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 50, outputStream)
-                val byteArray = outputStream.toByteArray()
-                val base64String = "data:image/jpeg;base64," + Base64.encodeToString(byteArray, Base64.DEFAULT)
-                usersCollection.document(myId).update("profilePicUrl", base64String)
-            } catch (e: Exception) { Log.e("FIRESTORE", "Error al procesar foto: ${e.message}") }
+                // 1. Crear referencia en el Bucket (ejemplo: profile_pics/USER_ID.jpg)
+                val fileRef = storage.reference.child("profile_pics/$myId.jpg")
+                
+                // 2. Subir el archivo directamente desde el URI
+                val uploadTask = fileRef.putFile(uri).await()
+                
+                // 3. Obtener la URL de descarga pública
+                val downloadUrl = fileRef.downloadUrl.await()
+                
+                // 4. Actualizar Firestore con la nueva URL (ya no Base64)
+                usersCollection.document(myId).update("profilePicUrl", downloadUrl.toString())
+                
+                Log.d("STORAGE", "Foto subida con éxito: $downloadUrl")
+            } catch (e: Exception) { 
+                Log.e("STORAGE", "Error al subir foto a Storage: ${e.message}") 
+            }
         }
     }
 
@@ -410,7 +421,6 @@ class MessageViewModel : ViewModel() {
                         }
                         val sorted = filtered.sortedBy { it.timestamp }
                         
-                        // Si el chat está abierto, detectamos si hay mensajes que NO son míos y están sin leer
                         val chatId = group?.id ?: user?.uid
                         if (chatId != null) {
                             val hasUnreadFromOthers = sorted.any { it.senderId != myId && !it.read }
