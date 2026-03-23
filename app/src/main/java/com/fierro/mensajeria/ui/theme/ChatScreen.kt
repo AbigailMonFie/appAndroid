@@ -1,9 +1,12 @@
 package com.fierro.mensajeria.ui.theme
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.Intent
 import android.location.Location
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -111,6 +114,19 @@ fun ChatScreen(
         }
     }
 
+    // URI temporal para la imagen de alta calidad
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && tempPhotoUri != null) {
+            viewModel.sendImageMessageFromUri(tempPhotoUri!!, selectedTimer)
+        }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.sendImageMessageFromUri(uri, selectedTimer)
+    }
+
     val recordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
             audioFile = File(context.cacheDir, "audio_${System.currentTimeMillis()}.mp4")
@@ -118,6 +134,35 @@ fun ChatScreen(
             isRecording = true
         } else {
             Toast.makeText(context, "Permiso de micrófono denegado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions[Manifest.permission.CAMERA] == true) {
+            // Crear un archivo en MediaStore para la foto de alta calidad
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "IMG_${System.currentTimeMillis()}.jpg")
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            }
+            tempPhotoUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            tempPhotoUri?.let { cameraLauncher.launch(it) }
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+            try {
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener { location: Location? ->
+                        if (location != null) viewModel.sendLocationMessage(location.latitude, location.longitude, selectedTimer)
+                        else {
+                            fusedLocationClient.lastLocation.addOnSuccessListener { lastLoc: Location? ->
+                                if (lastLoc != null) viewModel.sendLocationMessage(lastLoc.latitude, lastLoc.longitude, selectedTimer)
+                            }
+                        }
+                    }
+            } catch (e: SecurityException) { e.printStackTrace() }
         }
     }
 
@@ -139,35 +184,6 @@ fun ChatScreen(
 
     LaunchedEffect(textState) {
         viewModel.setTyping(if (textState.isNotEmpty()) (selectedUser?.uid ?: selectedGroup?.id) else null)
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) viewModel.sendImageMessage(bitmap, selectedTimer)
-    }
-
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) viewModel.sendImageMessageFromUri(uri, selectedTimer)
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-        if (permissions[Manifest.permission.CAMERA] == true) cameraLauncher.launch(null)
-    }
-
-    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
-            val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-            try {
-                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                    .addOnSuccessListener { location: Location? ->
-                        if (location != null) viewModel.sendLocationMessage(location.latitude, location.longitude, selectedTimer)
-                        else {
-                            fusedLocationClient.lastLocation.addOnSuccessListener { lastLoc: Location? ->
-                                if (lastLoc != null) viewModel.sendLocationMessage(lastLoc.latitude, lastLoc.longitude, selectedTimer)
-                            }
-                        }
-                    }
-            } catch (e: SecurityException) { e.printStackTrace() }
-        }
     }
 
     LaunchedEffect(isRecording) {

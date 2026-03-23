@@ -370,6 +370,8 @@ class MessageViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val baos = ByteArrayOutputStream()
+                // Calidad regular (80 en lugar de lo que sea que use por defecto si es muy bajo)
+                // Usamos 80 para un buen balance entre peso y nitidez
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
                 val data = baos.toByteArray()
                 val imageRef = storage.reference.child("chat_images/$messageId.jpg")
