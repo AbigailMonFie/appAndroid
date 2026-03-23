@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.*
 import android.util.Log
+import android.view.SurfaceView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -75,6 +77,7 @@ import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
+import io.agora.rtc2.video.VideoCanvas
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -101,6 +104,7 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+        val cameraGranted = permissions[Manifest.permission.CAMERA] ?: true
         if (!audioGranted) {
             Toast.makeText(this, "Se requiere permiso de micrófono para llamadas", Toast.LENGTH_LONG).show()
         }
@@ -177,10 +181,15 @@ class MainActivity : FragmentActivity() {
                     val call = currentCall
                     if (call != null) {
                         if (call.status == "CALLING" || call.status == "RINGING" || call.status == "ONGOING") {
-                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                                callPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                            val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+                            if (call.type == "VIDEO") permissions.add(Manifest.permission.CAMERA)
+                            
+                            val allGranted = permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+                            
+                            if (!allGranted) {
+                                callPermissionLauncher.launch(permissions.toTypedArray())
                             } else {
-                                setupAgora(call.receiverId)
+                                setupAgora(call.receiverId, call.type == "VIDEO")
                             }
                         }
                     } else {
@@ -243,7 +252,9 @@ class MainActivity : FragmentActivity() {
                                 val newState = !isMutedState.value
                                 isMutedState.value = newState
                                 rtcEngine?.muteLocalAudioStream(newState)
-                            }
+                            },
+                            rtcEngine = rtcEngine,
+                            remoteUid = remoteUidState.intValue
                         )
                     }
                 }
@@ -289,7 +300,7 @@ class MainActivity : FragmentActivity() {
         try { biometricPrompt.authenticate(promptInfo) } catch (e: Exception) { onSuccess() }
     }
 
-    private fun setupAgora(channelName: String) {
+    private fun setupAgora(channelName: String, isVideo: Boolean) {
         if (rtcEngine != null) return
         if (channelName.isEmpty()) return
         
@@ -311,11 +322,23 @@ class MainActivity : FragmentActivity() {
             }
             rtcEngine = RtcEngine.create(config).apply {
                 setChannelProfile(Constants.CHANNEL_PROFILE_COMMUNICATION)
+                if (isVideo) {
+                    enableVideo()
+                    startPreview()
+                }
                 enableAudio() 
                 enableLocalAudio(true)
                 setEnableSpeakerphone(isSpeakerphoneState.value)
                 muteLocalAudioStream(isMutedState.value)
-                joinChannel(AgoraConfig.TOKEN, channelName, "", 0)
+                
+                val options = io.agora.rtc2.ChannelMediaOptions().apply {
+                    autoSubscribeAudio = true
+                    autoSubscribeVideo = isVideo
+                    publishMicrophoneTrack = true
+                    publishCameraTrack = isVideo
+                    clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
+                }
+                joinChannel(AgoraConfig.TOKEN, channelName, 0, options)
             }
         } catch (e: Exception) { 
             Log.e("AGORA", "Error: ${e.message}") 
@@ -626,7 +649,9 @@ fun CallOverlay(
     onAccept: () -> Unit, 
     onReject: () -> Unit,
     onToggleSpeaker: () -> Unit,
-    onToggleMute: () -> Unit
+    onToggleMute: () -> Unit,
+    rtcEngine: RtcEngine?,
+    remoteUid: Int
 ) {
     var secondsElapsed by remember { mutableIntStateOf(0) }
     
@@ -646,54 +671,88 @@ fun CallOverlay(
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)) {
-        Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Box(Modifier.size(120.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
-                if (!call.callerProfilePicUrl.isNullOrEmpty()) {
-                    AsyncImage(model = call.callerProfilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (call.type == "VIDEO" && call.status == "ONGOING") {
+                // Video Remoto
+                if (remoteUid != 0) {
+                    AndroidView(
+                        factory = { context ->
+                            val view = SurfaceView(context)
+                            rtcEngine?.setupRemoteVideo(VideoCanvas(view, VideoCanvas.RENDER_MODE_HIDDEN, remoteUid))
+                            view
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 } else {
-                    Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.White)
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-            Text(call.callerName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            
-            val statusLabel = when(call.status) {
-                "RINGING" -> "Llamada entrante..."
-                "CALLING" -> "Llamando..."
-                "ONGOING" -> "En llamada - $timeText"
-                else -> ""
-            }
-            Text(statusLabel, color = MaterialTheme.colorScheme.primary)
-            
-            Spacer(Modifier.height(64.dp))
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Botón Silenciar
-                IconButton(onClick = onToggleMute) {
-                    Icon(
-                        imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic, 
-                        contentDescription = null,
-                        tint = if (isMuted) Color.Red else Color.Gray
-                    )
-                }
-
-                // Botón Altavoz
-                IconButton(onClick = onToggleSpeaker) {
-                    Icon(
-                        imageVector = if (isSpeakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                        contentDescription = null,
-                        tint = if (isSpeakerOn) MaterialTheme.colorScheme.primary else Color.Gray
-                    )
-                }
-
-                if (call.status == "RINGING") {
-                    FloatingActionButton(onClick = onAccept, containerColor = Color.Green, contentColor = Color.White, shape = CircleShape) {
-                        Icon(Icons.Default.Call, null)
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
                 }
 
-                FloatingActionButton(onClick = onReject, containerColor = Color.Red, contentColor = Color.White, shape = CircleShape) {
-                    Icon(Icons.Default.CallEnd, null)
+                // Video Local (Miniatura)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 64.dp, end = 16.dp)
+                        .size(120.dp, 160.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black)
+                        .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                ) {
+                    AndroidView(
+                        factory = { context ->
+                            val view = SurfaceView(context)
+                            // Crucial: poner la miniatura por encima del video remoto
+                            view.setZOrderMediaOverlay(true)
+                            rtcEngine?.setupLocalVideo(VideoCanvas(view, VideoCanvas.RENDER_MODE_HIDDEN, 0))
+                            view
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                if (call.type != "VIDEO" || call.status != "ONGOING") {
+                    Box(Modifier.size(120.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
+                        if (!call.callerProfilePicUrl.isNullOrEmpty()) {
+                            AsyncImage(model = call.callerProfilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.White)
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Text(call.callerName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = if (call.type == "VIDEO") Color.White else MaterialTheme.colorScheme.onBackground)
+                }
+                
+                val statusLabel = when(call.status) {
+                    "RINGING" -> "Llamada entrante..."
+                    "CALLING" -> "Llamando..."
+                    "ONGOING" -> "En llamada - $timeText"
+                    else -> ""
+                }
+                Text(statusLabel, color = if (call.type == "VIDEO" && call.status == "ONGOING") Color.White else MaterialTheme.colorScheme.primary)
+                
+                Spacer(Modifier.height(if (call.type == "VIDEO" && call.status == "ONGOING") 320.dp else 64.dp))
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onToggleMute, modifier = Modifier.background(Color.Black.copy(alpha = 0.2f), CircleShape)) {
+                        Icon(imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = null, tint = if (isMuted) Color.Red else Color.White)
+                    }
+
+                    IconButton(onClick = onToggleSpeaker, modifier = Modifier.background(Color.Black.copy(alpha = 0.2f), CircleShape)) {
+                        Icon(imageVector = if (isSpeakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, contentDescription = null, tint = if (isSpeakerOn) MaterialTheme.colorScheme.primary else Color.White)
+                    }
+
+                    if (call.status == "RINGING") {
+                        FloatingActionButton(onClick = onAccept, containerColor = Color.Green, contentColor = Color.White, shape = CircleShape) {
+                            Icon(Icons.Default.Call, null)
+                        }
+                    }
+
+                    FloatingActionButton(onClick = onReject, containerColor = Color.Red, contentColor = Color.White, shape = CircleShape) {
+                        Icon(Icons.Default.CallEnd, null)
+                    }
                 }
             }
         }
