@@ -104,7 +104,6 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
-        val cameraGranted = permissions[Manifest.permission.CAMERA] ?: true
         if (!audioGranted) {
             Toast.makeText(this, "Se requiere permiso de micrófono para llamadas", Toast.LENGTH_LONG).show()
         }
@@ -191,9 +190,21 @@ class MainActivity : FragmentActivity() {
                             } else {
                                 setupAgora(call.receiverId, call.type == "VIDEO")
                             }
+
+                            // INICIAR SERVICIO EN SEGUNDO PLANO
+                            if (call.status == "ONGOING") {
+                                val serviceIntent = Intent(context, CallService::class.java)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(serviceIntent)
+                                } else {
+                                    context.startService(serviceIntent)
+                                }
+                            }
                         }
                     } else {
                         leaveChannel()
+                        // DETENER SERVICIO
+                        context.stopService(Intent(context, CallService::class.java))
                     }
                 }
 
@@ -714,15 +725,22 @@ fun CallOverlay(
 
             Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 if (call.type != "VIDEO" || call.status != "ONGOING") {
+                    val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+                    val myId = auth.currentUser?.uid ?: ""
+                    val isOutgoing = call.callerId == myId
+
+                    val displayPic = if (isOutgoing) call.receiverProfilePicUrl else call.callerProfilePicUrl
+                    val displayName = if (isOutgoing) call.receiverName else call.callerName
+
                     Box(Modifier.size(120.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
-                        if (!call.callerProfilePicUrl.isNullOrEmpty()) {
-                            AsyncImage(model = call.callerProfilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        if (!displayPic.isNullOrEmpty()) {
+                            AsyncImage(model = displayPic, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         } else {
                             Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.White)
                         }
                     }
                     Spacer(Modifier.height(24.dp))
-                    Text(call.callerName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = if (call.type == "VIDEO") Color.White else MaterialTheme.colorScheme.onBackground)
+                    Text(displayName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = if (call.type == "VIDEO") Color.White else MaterialTheme.colorScheme.onBackground)
                 }
                 
                 val statusLabel = when(call.status) {
@@ -820,8 +838,23 @@ fun GroupChatItem(group: Group, subtitle: String, time: String, unreadCount: Int
 @Composable
 fun BottomNavigationBar(selectedItem: Int, onItemSelected: (Int) -> Unit) {
     NavigationBar {
-        NavigationBarItem(selected = selectedItem == 0, onClick = { onItemSelected(0) }, icon = { Icon(Icons.AutoMirrored.Filled.Chat, null) }, label = { Text("Chats") })
-        NavigationBarItem(selected = selectedItem == 1, onClick = { onItemSelected(1) }, icon = { Icon(Icons.Default.Groups, null) }, label = { Text("Grupos") })
-        NavigationBarItem(selected = selectedItem == 2, onClick = { onItemSelected(2) }, icon = { Icon(Icons.Default.Call, null) }, label = { Text("Llamadas") })
+        NavigationBarItem(
+            selected = selectedItem == 0, 
+            onClick = { onItemSelected(0) }, 
+            icon = { Icon(painter = painterResource(id = R.drawable.chats), contentDescription = null, modifier = Modifier.size(24.dp)) }, 
+            label = { Text("Chats") }
+        )
+        NavigationBarItem(
+            selected = selectedItem == 1, 
+            onClick = { onItemSelected(1) }, 
+            icon = { Icon(painter = painterResource(id = R.drawable.grupos), contentDescription = null, modifier = Modifier.size(24.dp)) }, 
+            label = { Text("Grupos") }
+        )
+        NavigationBarItem(
+            selected = selectedItem == 2, 
+            onClick = { onItemSelected(2) }, 
+            icon = { Icon(painter = painterResource(id = R.drawable.llamadas), contentDescription = null, modifier = Modifier.size(24.dp)) }, 
+            label = { Text("Llamadas") }
+        )
     }
 }

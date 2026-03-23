@@ -460,11 +460,15 @@ class MessageViewModel : ViewModel() {
     fun startCall(type: String) {
         val targetId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val targetName = _selectedGroup.value?.name ?: _selectedUser.value?.displayName ?: "Chat"
+        val targetPic = _selectedGroup.value?.let { null } ?: _selectedUser.value?.profilePicUrl
+
         val call = CallInfo(
             callerId = myId,
             callerName = ownUser.value?.displayName ?: "Alguien",
             callerProfilePicUrl = ownUser.value?.profilePicUrl,
             receiverId = targetId,
+            receiverName = targetName,
+            receiverProfilePicUrl = targetPic,
             type = type,
             status = "RINGING"
         )
