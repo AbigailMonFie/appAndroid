@@ -79,10 +79,13 @@ fun ChatScreen(
     var showParticipantsDialog by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var enlargedImageUrl by remember { mutableStateOf<String?>(null) }
-    var messageToReact by remember { mutableStateOf<FirebaseMessage?>(null) }
+    var messageToOptions by remember { mutableStateOf<FirebaseMessage?>(null) }
     var selectedTimer by remember { mutableStateOf<Int?>(null) }
 
     val isBlocked = selectedUser?.let { blockedUserIds.contains(it.uid) } ?: false
+
+    // Obtener el usuario seleccionado actualizado de la lista global de usuarios
+    val currentUserStatus = users.find { it.uid == selectedUser?.uid }
 
     // Indicador de "Escribiendo..."
     val typingUser = remember(users, selectedUser) {
@@ -201,11 +204,26 @@ fun ChatScreen(
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text(text = selectedGroup?.name ?: selectedUser?.displayName ?: "Chat", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    text = if (typingUser != null) "Escribiendo..." else if (selectedGroup != null) "${selectedGroup?.members?.size} miembros" else "En línea",
-                                    fontSize = 11.sp,
-                                    color = if (typingUser != null) Color.Green else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                                )
+                                if (selectedGroup == null) {
+                                    val statusText = when {
+                                        typingUser != null -> "Escribiendo..."
+                                        currentUserStatus?.online == true -> "En línea"
+                                        else -> ""
+                                    }
+                                    if (statusText.isNotEmpty()) {
+                                        Text(
+                                            text = statusText,
+                                            fontSize = 11.sp,
+                                            color = if (typingUser != null) Color.Green else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        text = "${selectedGroup?.members?.size} miembros",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -269,7 +287,7 @@ fun ChatScreen(
                         message = msg, 
                         myId = viewModel.myId, 
                         onImageClick = { url -> enlargedImageUrl = url },
-                        onLongClick = { messageToReact = it }
+                        onLongClick = { messageToOptions = it }
                     )
                 }
             }
@@ -341,12 +359,18 @@ fun ChatScreen(
         }
     }
 
-    if (messageToReact != null) {
-        ReactionPicker(
-            onDismiss = { messageToReact = null },
+    if (messageToOptions != null) {
+        MessageOptionsDialog(
+            message = messageToOptions!!,
+            myId = viewModel.myId,
+            onDismiss = { messageToOptions = null },
             onReactionSelected = { reaction ->
-                viewModel.addReaction(messageToReact!!.id, reaction)
-                messageToReact = null
+                viewModel.addReaction(messageToOptions!!.id, reaction)
+                messageToOptions = null
+            },
+            onDeleteSelected = {
+                viewModel.deleteMessage(messageToOptions!!.id)
+                messageToOptions = null
             }
         )
     }
@@ -366,18 +390,36 @@ fun ChatScreen(
 }
 
 @Composable
-fun ReactionPicker(onDismiss: () -> Unit, onReactionSelected: (String) -> Unit) {
+fun MessageOptionsDialog(
+    message: FirebaseMessage,
+    myId: String,
+    onDismiss: () -> Unit,
+    onReactionSelected: (String) -> Unit,
+    onDeleteSelected: () -> Unit
+) {
     val reactions = listOf("❤️", "😂", "😮", "😢", "😡", "👍")
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 8.dp) {
-            Row(modifier = Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                reactions.forEach { reaction ->
-                    Text(
-                        text = reaction,
-                        fontSize = 28.sp,
-                        modifier = Modifier.clickable { onReactionSelected(reaction) }
-                    )
+            Column(modifier = Modifier.padding(16.dp).width(IntrinsicSize.Max)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    reactions.forEach { reaction ->
+                        Text(
+                            text = reaction,
+                            fontSize = 28.sp,
+                            modifier = Modifier.clickable { onReactionSelected(reaction) }
+                        )
+                    }
                 }
+                
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                ListItem(
+                    headlineContent = { Text("Eliminar mensaje", color = Color.Red) },
+                    leadingContent = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+                    modifier = Modifier.clickable { onDeleteSelected() },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
             }
         }
     }

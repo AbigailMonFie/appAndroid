@@ -109,17 +109,6 @@ class MainActivity : FragmentActivity() {
             var isDarkMode by rememberSaveable { mutableStateOf(true) }
             var isAppUnlocked by rememberSaveable { mutableStateOf(false) }
 
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_STOP) {
-                        isAppUnlocked = false 
-                    }
-                }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
-
             MensajeriaTheme(darkTheme = isDarkMode) {
                 val authViewModel: AuthViewModel = viewModel()
                 val chatViewModel: MessageViewModel = viewModel()
@@ -128,6 +117,24 @@ class MainActivity : FragmentActivity() {
                 val selectedGroup by chatViewModel.selectedGroup.collectAsState()
                 val currentCall by chatViewModel.currentCall.collectAsState()
                 val isBiometricEnabled by chatViewModel.isBiometricEnabled.collectAsState()
+
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner, currentUser) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_START -> {
+                                if (currentUser != null) chatViewModel.updateOnlineStatus(true)
+                            }
+                            Lifecycle.Event.ON_STOP -> {
+                                if (currentUser != null) chatViewModel.updateOnlineStatus(false)
+                                isAppUnlocked = false 
+                            }
+                            else -> {}
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
 
                 LaunchedEffect(currentUser, isBiometricEnabled, isAppUnlocked) {
                     if (currentUser != null && isBiometricEnabled == true && !isAppUnlocked) {

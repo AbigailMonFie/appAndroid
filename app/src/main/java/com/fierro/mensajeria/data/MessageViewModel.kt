@@ -133,6 +133,7 @@ class MessageViewModel : ViewModel() {
         listenForLastMessages()
         listenForCallLogs()
         checkBiometricSettings()
+        updateOnlineStatus(true)
     }
 
     private fun checkBiometricSettings() {
@@ -248,6 +249,15 @@ class MessageViewModel : ViewModel() {
         usersCollection.document(myId).update("typingTo", targetId)
     }
 
+    fun updateOnlineStatus(isOnline: Boolean) {
+        if (myId == "anonimo") return
+        val data = mapOf(
+            "online" to isOnline,
+            "lastSeen" to System.currentTimeMillis()
+        )
+        usersCollection.document(myId).update(data)
+    }
+
     fun addReaction(messageId: String, reaction: String) {
         viewModelScope.launch {
             try {
@@ -260,6 +270,16 @@ class MessageViewModel : ViewModel() {
                     transaction.update(msgRef, "reactions", updatedReactions)
                 }.await()
             } catch (e: Exception) { Log.e("FIRESTORE", "Error reaction: ${e.message}") }
+        }
+    }
+
+    fun deleteMessage(messageId: String) {
+        viewModelScope.launch {
+            try {
+                messagesCollection.document(messageId).delete().await()
+            } catch (e: Exception) {
+                Log.e("FIRESTORE", "Error al eliminar mensaje: ${e.message}")
+            }
         }
     }
 
@@ -628,6 +648,7 @@ class MessageViewModel : ViewModel() {
         super.onCleared()
         activeListeners.forEach { it.remove() }
         activeListeners.clear()
+        updateOnlineStatus(false)
     }
 
     private fun addCallToLog(log: CallLog) {
