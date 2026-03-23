@@ -158,6 +158,13 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun updateDisplayName(newName: String) {
+        if (myId == "anonimo") return
+        usersCollection.document(myId).update("displayName", newName).addOnSuccessListener {
+            // Actualizar localmente si es necesario, aunque el listener de fetchOwnProfile debería hacerlo
+        }
+    }
+
     private fun fetchOwnProfile() {
         if (myId == "anonimo") return
         val listener = usersCollection.document(myId).addSnapshotListener { snapshot, _ ->
@@ -370,8 +377,6 @@ class MessageViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val baos = ByteArrayOutputStream()
-                // Calidad regular (80 en lugar de lo que sea que use por defecto si es muy bajo)
-                // Usamos 80 para un buen balance entre peso y nitidez
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
                 val data = baos.toByteArray()
                 val imageRef = storage.reference.child("chat_images/$messageId.jpg")
@@ -437,10 +442,16 @@ class MessageViewModel : ViewModel() {
         val listener = callsCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
                 val call = snapshot.toObject(CallInfo::class.java)
-                if (call?.status == "RINGING") {
+                if (call?.status == "RINGING" || call?.status == "ONGOING") {
                     _currentCall.value = call
-                    addCallToLog(CallLog(UUID.randomUUID().toString(), call.callerName, call.type, System.currentTimeMillis(), false))
+                    if (call.status == "RINGING") {
+                        addCallToLog(CallLog(UUID.randomUUID().toString(), call.callerName, call.type, System.currentTimeMillis(), false))
+                    }
+                } else {
+                    _currentCall.value = null
                 }
+            } else {
+                _currentCall.value = null
             }
         }
         activeListeners.add(listener)
@@ -449,11 +460,18 @@ class MessageViewModel : ViewModel() {
     fun startCall(type: String) {
         val targetId = _selectedGroup.value?.id ?: _selectedUser.value?.uid ?: return
         val targetName = _selectedGroup.value?.name ?: _selectedUser.value?.displayName ?: "Chat"
-        val call = CallInfo(myId, ownUser.value?.displayName ?: "Alguien", targetId, type, "RINGING")
+        val call = CallInfo(
+            callerId = myId,
+            callerName = ownUser.value?.displayName ?: "Alguien",
+            callerProfilePicUrl = ownUser.value?.profilePicUrl,
+            receiverId = targetId,
+            type = type,
+            status = "RINGING"
+        )
+        
         if (_selectedGroup.value != null) {
             _selectedGroup.value?.members?.forEach { if (it != myId) callsCollection.document(it).set(call) }
         } else {
-            // Check if I am blocked by the receiver before calling
             viewModelScope.launch {
                 try {
                     val isBlockedByReceiver = db.collection("users").document(targetId)
@@ -467,7 +485,6 @@ class MessageViewModel : ViewModel() {
                     }
                 } catch (e: Exception) {
                     Log.e("BLOCK", "Error al verificar bloqueo en llamada: ${e.message}")
-                    // Ante la duda (error de permisos), podríamos optar por no permitir la llamada o reintentar
                 }
             }
             return
@@ -480,6 +497,7 @@ class MessageViewModel : ViewModel() {
         val call = _currentCall.value ?: return
         callsCollection.document(myId).delete()
         if (_selectedGroup.value == null) callsCollection.document(call.receiverId).delete()
+        if (call.callerId != myId) callsCollection.document(call.callerId).delete()
         _currentCall.value = null
     }
 
@@ -488,6 +506,8 @@ class MessageViewModel : ViewModel() {
         val updatedCall = call.copy(status = "ONGOING")
         _currentCall.value = updatedCall
         callsCollection.document(myId).set(updatedCall)
+        // También actualizar el documento del llamante para que sepa que aceptamos
+        callsCollection.document(call.callerId).set(updatedCall)
     }
 
     fun selectUser(user: User) {

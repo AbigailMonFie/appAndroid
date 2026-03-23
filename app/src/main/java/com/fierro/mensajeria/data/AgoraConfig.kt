@@ -1,8 +1,9 @@
 package com.fierro.mensajeria.data
 
 object AgoraConfig {
+    // REEMPLAZA esta cadena por el App ID que obtuviste en tu consola de Agora
+    const val APP_ID = "2cd4ba12955a406d9459089c7974b7de"
 
-    const val APP_ID = "919ab065a93c46cd91573b00ec252446"
-
+    // Al usar "Testing Mode" en Agora, el TOKEN debe permanecer null o vacío
     val TOKEN: String? = null
 }

@@ -1,9 +1,11 @@
 package com.fierro.mensajeria
 
+import android.Manifest
 import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.Bundle
+import android.content.pm.PackageManager
+import android.os.*
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -31,6 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -67,9 +71,11 @@ import com.fierro.mensajeria.ui.theme.MensajeriaTheme
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
+import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -77,6 +83,8 @@ import java.util.*
 class MainActivity : FragmentActivity() {
     private var rtcEngine: RtcEngine? = null
     private var remoteUidState = mutableIntStateOf(0)
+    private var isSpeakerphoneState = mutableStateOf(true)
+    private var isMutedState = mutableStateOf(false)
     
     private var onAuthSuccessCallback: (() -> Unit)? = null
 
@@ -89,11 +97,12 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (!isGranted) {
-            Toast.makeText(this, "Permiso de notificaciones denegado", Toast.LENGTH_SHORT).show()
+    private val callPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+        if (!audioGranted) {
+            Toast.makeText(this, "Se requiere permiso de micrófono para llamadas", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -102,6 +111,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
             requestPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
@@ -119,6 +129,8 @@ class MainActivity : FragmentActivity() {
                 val isBiometricEnabled by chatViewModel.isBiometricEnabled.collectAsState()
 
                 val lifecycleOwner = LocalLifecycleOwner.current
+                val context = LocalContext.current
+
                 DisposableEffect(lifecycleOwner, currentUser) {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
@@ -134,6 +146,46 @@ class MainActivity : FragmentActivity() {
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
+
+                // VIBRACION PARA LLAMADA ENTRANTE
+                LaunchedEffect(currentCall?.status) {
+                    if (currentCall?.status == "RINGING" && currentCall?.callerId != chatViewModel.myId) {
+                        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                            vibratorManager.defaultVibrator
+                        } else {
+                            @Suppress("DEPRECATION")
+                            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                        }
+                        
+                        val pattern = longArrayOf(0, 500, 500)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(pattern, 0)
+                        }
+                        
+                        snapshotFlow { currentCall?.status }.collect { status ->
+                            if (status != "RINGING") vibrator.cancel()
+                        }
+                    }
+                }
+
+                LaunchedEffect(currentCall?.status) {
+                    val call = currentCall
+                    if (call != null) {
+                        if (call.status == "CALLING" || call.status == "RINGING" || call.status == "ONGOING") {
+                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                callPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                            } else {
+                                setupAgora(call.receiverId)
+                            }
+                        }
+                    } else {
+                        leaveChannel()
+                    }
                 }
 
                 LaunchedEffect(currentUser, isBiometricEnabled, isAppUnlocked) {
@@ -176,9 +228,22 @@ class MainActivity : FragmentActivity() {
                     }
 
                     currentCall?.let { call ->
-                        CallOverlay(call, rtcEngine, remoteUidState.intValue, 
-                            onAccept = { setupAgora(call.receiverId); chatViewModel.acceptCall() },
-                            onReject = { leaveChannel(); chatViewModel.endCall() }
+                        CallOverlay(
+                            call = call,
+                            isSpeakerOn = isSpeakerphoneState.value,
+                            isMuted = isMutedState.value,
+                            onAccept = { chatViewModel.acceptCall() },
+                            onReject = { chatViewModel.endCall() },
+                            onToggleSpeaker = {
+                                val newState = !isSpeakerphoneState.value
+                                isSpeakerphoneState.value = newState
+                                rtcEngine?.setEnableSpeakerphone(newState)
+                            },
+                            onToggleMute = {
+                                val newState = !isMutedState.value
+                                isMutedState.value = newState
+                                rtcEngine?.muteLocalAudioStream(newState)
+                            }
                         )
                     }
                 }
@@ -226,21 +291,35 @@ class MainActivity : FragmentActivity() {
 
     private fun setupAgora(channelName: String) {
         if (rtcEngine != null) return
+        if (channelName.isEmpty()) return
+        
         try {
             val config = RtcEngineConfig().apply {
                 mContext = applicationContext
                 mAppId = AgoraConfig.APP_ID
                 mEventHandler = object : IRtcEngineEventHandler() {
-                    override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) { Log.d("AGORA", "Unido") }
-                    override fun onUserJoined(uid: Int, elapsed: Int) { remoteUidState.intValue = uid }
-                    override fun onUserOffline(uid: Int, reason: Int) { remoteUidState.intValue = 0 }
+                    override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) { 
+                        Log.d("AGORA", "Unido con éxito: $channel") 
+                    }
+                    override fun onUserJoined(uid: Int, elapsed: Int) { 
+                        remoteUidState.intValue = uid 
+                    }
+                    override fun onUserOffline(uid: Int, reason: Int) { 
+                        remoteUidState.intValue = 0 
+                    }
                 }
             }
             rtcEngine = RtcEngine.create(config).apply {
-                enableVideo()
+                setChannelProfile(Constants.CHANNEL_PROFILE_COMMUNICATION)
+                enableAudio() 
+                enableLocalAudio(true)
+                setEnableSpeakerphone(isSpeakerphoneState.value)
+                muteLocalAudioStream(isMutedState.value)
                 joinChannel(AgoraConfig.TOKEN, channelName, "", 0)
             }
-        } catch (e: Exception) { Log.e("AGORA", "Error: ${e.message}") }
+        } catch (e: Exception) { 
+            Log.e("AGORA", "Error: ${e.message}") 
+        }
     }
 
     private fun leaveChannel() {
@@ -248,6 +327,7 @@ class MainActivity : FragmentActivity() {
         RtcEngine.destroy()
         rtcEngine = null
         remoteUidState.intValue = 0
+        isMutedState.value = false
     }
 }
 
@@ -331,6 +411,8 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
     var isViewingArchived by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showNicknameDialog by remember { mutableStateOf(false) }
+    var nicknameText by remember { mutableStateOf("") }
     var userToMenu by remember { mutableStateOf<User?>(null) }
     var groupToLeave by remember { mutableStateOf<Group?>(null) }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { if (it != null) viewModel.uploadProfilePicture(context, it) }
@@ -445,6 +527,31 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
         }
     }
 
+    if (showNicknameDialog) {
+        AlertDialog(
+            onDismissRequest = { showNicknameDialog = false },
+            title = { Text("Cambiar apodo") },
+            text = {
+                OutlinedTextField(
+                    value = nicknameText,
+                    onValueChange = { nicknameText = it },
+                    label = { Text("Nuevo apodo") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (nicknameText.isNotBlank()) {
+                        viewModel.updateDisplayName(nicknameText)
+                        showNicknameDialog = false
+                    }
+                }) { Text("Guardar") }
+            },
+            dismissButton = { TextButton(onClick = { showNicknameDialog = false }) { Text("Cancelar") } }
+        )
+    }
+
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
@@ -456,6 +563,15 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                         else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp))
                     }
                     Button(onClick = { galleryLauncher.launch("image/*") }) { Text("Cambiar foto") }
+                    
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { 
+                        nicknameText = ownUser?.displayName ?: ""
+                        showNicknameDialog = true 
+                    }) {
+                        Text("Cambiar apodo: ${ownUser?.displayName}")
+                    }
+
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Bloqueo de aplicación", modifier = Modifier.weight(1f))
@@ -503,14 +619,82 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
 }
 
 @Composable
-fun CallOverlay(call: CallInfo, rtcEngine: RtcEngine?, remoteUid: Int, onAccept: () -> Unit, onReject: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) {
+fun CallOverlay(
+    call: CallInfo, 
+    isSpeakerOn: Boolean,
+    isMuted: Boolean,
+    onAccept: () -> Unit, 
+    onReject: () -> Unit,
+    onToggleSpeaker: () -> Unit,
+    onToggleMute: () -> Unit
+) {
+    var secondsElapsed by remember { mutableIntStateOf(0) }
+    
+    LaunchedEffect(call.status) {
+        if (call.status == "ONGOING") {
+            while (true) {
+                delay(1000)
+                secondsElapsed++
+            }
+        }
+    }
+
+    val timeText = remember(secondsElapsed) {
+        val mins = secondsElapsed / 60
+        val secs = secondsElapsed % 60
+        String.format(Locale.getDefault(), "%02d:%02d", mins, secs)
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)) {
         Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text(call.callerName, style = MaterialTheme.typography.headlineLarge)
-            Text(call.status)
-            Row {
-                if (call.status == "RINGING") Button(onClick = onAccept) { Text("Aceptar") }
-                Button(onClick = onReject) { Text("Colgar") }
+            Box(Modifier.size(120.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
+                if (!call.callerProfilePicUrl.isNullOrEmpty()) {
+                    AsyncImage(model = call.callerProfilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = Color.White)
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            Text(call.callerName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            
+            val statusLabel = when(call.status) {
+                "RINGING" -> "Llamada entrante..."
+                "CALLING" -> "Llamando..."
+                "ONGOING" -> "En llamada - $timeText"
+                else -> ""
+            }
+            Text(statusLabel, color = MaterialTheme.colorScheme.primary)
+            
+            Spacer(Modifier.height(64.dp))
+            
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Botón Silenciar
+                IconButton(onClick = onToggleMute) {
+                    Icon(
+                        imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic, 
+                        contentDescription = null,
+                        tint = if (isMuted) Color.Red else Color.Gray
+                    )
+                }
+
+                // Botón Altavoz
+                IconButton(onClick = onToggleSpeaker) {
+                    Icon(
+                        imageVector = if (isSpeakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                        contentDescription = null,
+                        tint = if (isSpeakerOn) MaterialTheme.colorScheme.primary else Color.Gray
+                    )
+                }
+
+                if (call.status == "RINGING") {
+                    FloatingActionButton(onClick = onAccept, containerColor = Color.Green, contentColor = Color.White, shape = CircleShape) {
+                        Icon(Icons.Default.Call, null)
+                    }
+                }
+
+                FloatingActionButton(onClick = onReject, containerColor = Color.Red, contentColor = Color.White, shape = CircleShape) {
+                    Icon(Icons.Default.CallEnd, null)
+                }
             }
         }
     }
