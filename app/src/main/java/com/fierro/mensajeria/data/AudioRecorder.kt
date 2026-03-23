@@ -3,8 +3,8 @@ package com.fierro.mensajeria.data
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Log
 import java.io.File
-import java.io.FileOutputStream
 
 class AudioRecorder(private val context: Context) {
 
@@ -20,29 +20,42 @@ class AudioRecorder(private val context: Context) {
     }
 
     fun start(outputFile: File) {
-        recorder = createRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setOutputFile(FileOutputStream(outputFile).fd)
+        try {
+            stop() // Asegurar que no haya nada corriendo
+            recorder = createRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(outputFile.absolutePath)
 
-            prepare()
-            start()
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            Log.e("AudioRecorder", "Error al iniciar grabación: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     fun stop() {
         try {
-            recorder?.stop()
+            recorder?.apply {
+                stop()
+                reset()
+                release()
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("AudioRecorder", "Error al detener grabación: ${e.message}")
+        } finally {
+            recorder = null
         }
-        recorder?.reset()
-        recorder?.release()
-        recorder = null
     }
 
     fun getMaxAmplitude(): Int {
-        return recorder?.maxAmplitude ?: 0
+        return try {
+            recorder?.maxAmplitude ?: 0
+        } catch (e: Exception) {
+            0
+        }
     }
 }

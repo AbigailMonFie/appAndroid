@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.Intent
 import android.location.Location
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
+import com.fierro.mensajeria.data.AudioPlayer
 import com.fierro.mensajeria.data.AudioRecorder
 import com.fierro.mensajeria.data.FirebaseMessage
 import com.fierro.mensajeria.data.MessageViewModel
@@ -92,17 +95,36 @@ fun ChatScreen(
         users.find { it.typingTo == viewModel.myId && it.uid == selectedUser?.uid }
     }
 
-    // Audio recording state
+    // Audio states
     val recorder = remember { AudioRecorder(context) }
+    val audioPlayer = remember { AudioPlayer(context) }
     var isRecording by remember { mutableStateOf(false) }
     var audioFile by remember { mutableStateOf<File?>(null) }
     val amplitudes = remember { mutableStateListOf<Float>() }
+    var currentlyPlayingUrl by remember { mutableStateOf<String?>(null) }
 
     val filteredMessages = remember(messages, localSearchText, isSearching) {
         if (isSearching && localSearchText.isNotBlank()) {
             messages.filter { it.content.contains(localSearchText, ignoreCase = true) }
         } else {
             messages
+        }
+    }
+
+    val recordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            audioFile = File(context.cacheDir, "audio_${System.currentTimeMillis()}.mp4")
+            recorder.start(audioFile!!)
+            isRecording = true
+        } else {
+            Toast.makeText(context, "Permiso de micrófono denegado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            recorder.stop()
+            audioPlayer.stop()
         }
     }
 
@@ -286,8 +308,18 @@ fun ChatScreen(
                     ChatBubble(
                         message = msg, 
                         myId = viewModel.myId, 
+                        isPlaying = currentlyPlayingUrl == msg.content.removePrefix("🎤 AUDIO_MSG:"),
                         onImageClick = { url -> enlargedImageUrl = url },
-                        onLongClick = { messageToOptions = it }
+                        onLongClick = { messageToOptions = it },
+                        onPlayAudio = { url ->
+                            if (currentlyPlayingUrl == url) {
+                                audioPlayer.stop()
+                                currentlyPlayingUrl = null
+                            } else {
+                                currentlyPlayingUrl = url
+                                audioPlayer.play(url) { currentlyPlayingUrl = null }
+                            }
+                        }
                     )
                 }
             }
@@ -339,9 +371,7 @@ fun ChatScreen(
                                     viewModel.sendMessage(textState, selectedTimer)
                                     textState = ""
                                 } else if (!isRecording) {
-                                    audioFile = File(context.cacheDir, "audio_${System.currentTimeMillis()}.mp4")
-                                    recorder.start(audioFile!!)
-                                    isRecording = true
+                                    recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 } else {
                                     isRecording = false
                                     recorder.stop()
@@ -437,6 +467,41 @@ fun WaveformAnimation(amplitudes: List<Float>) {
 }
 
 @Composable
+fun PlayingWaveform(isPlaying: Boolean) {
+    val infiniteTransition = rememberInfiniteTransition(label = "wave")
+    val heights = List(10) { index ->
+        if (isPlaying) {
+            infiniteTransition.animateFloat(
+                initialValue = 5f,
+                targetValue = 25f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 400 + (index * 50), easing = LinearOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "h_$index"
+            )
+        } else {
+            remember { mutableFloatStateOf(10f) }
+        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.height(30.dp).padding(horizontal = 4.dp)
+    ) {
+        heights.forEach { heightState ->
+            Box(
+                Modifier
+                    .width(2.dp)
+                    .height(heightState.value.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), RoundedCornerShape(1.dp))
+            )
+        }
+    }
+}
+
+@Composable
 fun EmojiPickerPanel(onEmojiSelect: (String) -> Unit) {
     val emojis = listOf("😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾", "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟")
     Surface(modifier = Modifier.fillMaxWidth().height(250.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 8.dp) {
@@ -478,8 +543,10 @@ fun DateSeparator(timestamp: Long) {
 fun ChatBubble(
     message: FirebaseMessage, 
     myId: String, 
+    isPlaying: Boolean = false,
     onImageClick: (String) -> Unit = {},
-    onLongClick: (FirebaseMessage) -> Unit = {}
+    onLongClick: (FirebaseMessage) -> Unit = {},
+    onPlayAudio: (String) -> Unit = {}
 ) {
     val isMe = message.senderId == myId
     val alignment = if (isMe) Alignment.End else Alignment.Start
@@ -519,12 +586,18 @@ fun ChatBubble(
                             }
                         }
                         message.content.startsWith("🎤 AUDIO_MSG:") -> {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { /* logic to play audio */ }) {
-                                Icon(Icons.Default.PlayArrow, null)
+                            val audioUrl = message.content.removePrefix("🎤 AUDIO_MSG:")
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically, 
+                                modifier = Modifier.clickable { onPlayAudio(audioUrl) }.padding(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow, 
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                                 Spacer(Modifier.width(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    repeat(15) { Box(Modifier.width(2.dp).height((5..20).random().dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))); Spacer(Modifier.width(2.dp)) }
-                                }
+                                PlayingWaveform(isPlaying = isPlaying)
                             }
                         }
                         message.content.startsWith("📍 LOCATION_MSG:") -> {
