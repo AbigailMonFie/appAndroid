@@ -487,7 +487,7 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 NavigationDrawerItem(label = { Text("Ajustes") }, selected = false, onClick = { showSettingsDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.Settings, null) })
                 NavigationDrawerItem(label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro") }, selected = false, onClick = { onThemeToggle() }, icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null) })
                 Spacer(Modifier.weight(1f))
-                NavigationDrawerItem(label = { Text("Cerrar Sesión", color = Color.Red) }, selected = false, onClick = { authViewModel.logout(); viewModel.clearData(); scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color.Red) })
+                NavigationDrawerItem(label = { Text("Cerrar Sesión", color = Color.Red) }, selected = false, onClick = { authViewModel.logout(context); viewModel.clearData(); scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color.Red) })
                 Spacer(Modifier.height(16.dp))
             }
         }
@@ -554,7 +554,7 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                                     containerColor = primaryColor,
                                     contentColor = Color.White
                                 ) {
-                                    Icon(Icons.Default.GroupAdd, "Crear grupo")
+                                    Icon(painter = painterResource(id = R.drawable.btngrupo), contentDescription = "Crear grupo", modifier = Modifier.size(24.dp))
                                 }
                             }
                         }
@@ -814,7 +814,7 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 Column {
                     ListItem(
                         headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar") },
-                        leadingContent = { Icon(if (isPinned) Icons.Default.PushPin else Icons.Default.PushPin, null, tint = if (isPinned) primaryColor else Color.Gray) },
+                        leadingContent = { Icon(Icons.Default.PushPin, null, tint = if (isPinned) primaryColor else Color.Gray) },
                         modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid); userToMenu = null }
                     )
                     ListItem(

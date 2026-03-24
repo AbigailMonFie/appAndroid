@@ -1,7 +1,10 @@
 package com.fierro.mensajeria.data
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.FirebaseAuthException
@@ -127,11 +130,19 @@ class AuthViewModel : ViewModel() {
 
     fun clearError() { _authError.value = null }
 
-    fun logout() {
+    fun logout(context: Context) {
         val uid = auth.currentUser?.uid
         if (uid != null) db.collection("users").document(uid).update("fcmToken", null)
+        
+        // Cerrar sesión en Firebase
         auth.signOut()
-        _currentUser.value = null
-        _authError.value = null
+        
+        // Cerrar sesión en Google y limpiar la cuenta "recordada"
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).build()
+        val googleSignInClient = GoogleSignIn.getClient(context, gso)
+        googleSignInClient.signOut().addOnCompleteListener {
+            _currentUser.value = null
+            _authError.value = null
+        }
     }
 }
