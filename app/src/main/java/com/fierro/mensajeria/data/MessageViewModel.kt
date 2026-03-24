@@ -429,6 +429,16 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun addContact(uid: String) {
+        viewModelScope.launch {
+            try {
+                usersCollection.document(myId).update("contacts", FieldValue.arrayUnion(uid)).await()
+            } catch (e: Exception) {
+                Log.e("FIRESTORE", "Error al agregar contacto: ${e.message}")
+            }
+        }
+    }
+
     fun updateContactAlias(contactId: String, newAlias: String) {
         viewModelScope.launch {
             try {

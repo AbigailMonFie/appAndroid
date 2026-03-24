@@ -72,6 +72,7 @@ fun ChatScreen(
     val selectedUser by viewModel.selectedUser.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
     val users by viewModel.users.collectAsState()
+    val ownUser by viewModel.ownUser.collectAsState()
     val blockedUserIds by viewModel.blockedUserIds.collectAsState()
     
     var textState by remember { mutableStateOf("") }
@@ -294,6 +295,17 @@ fun ChatScreen(
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, null) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, containerColor = MaterialTheme.colorScheme.surface) {
                             if (selectedUser != null) {
+                                val isContact = ownUser?.contacts?.contains(selectedUser!!.uid) ?: true
+                                if (!isContact) {
+                                    DropdownMenuItem(
+                                        text = { Text("Añadir contacto") },
+                                        onClick = { 
+                                            viewModel.addContact(selectedUser!!.uid)
+                                            showMenu = false 
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.PersonAdd, null) }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text(if (isBlocked) "Desbloquear" else "Bloquear") },
                                     onClick = { viewModel.toggleBlock(selectedUser!!.uid); showMenu = false },
