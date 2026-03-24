@@ -371,6 +371,32 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun updateGroupName(groupId: String, newName: String) {
+        viewModelScope.launch {
+            try {
+                groupsCollection.document(groupId).update("name", newName).await()
+                // Update local state if it's the selected group
+                if (_selectedGroup.value?.id == groupId) {
+                    _selectedGroup.value = _selectedGroup.value?.copy(name = newName)
+                }
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error updating group name: ${e.message}") }
+        }
+    }
+
+    fun updateGroupPhoto(groupId: String, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val fileRef = storage.reference.child("group_pics/$groupId.jpg")
+                fileRef.putFile(uri).await()
+                val downloadUrl = fileRef.downloadUrl.await().toString()
+                groupsCollection.document(groupId).update("profilePicUrl", downloadUrl).await()
+                if (_selectedGroup.value?.id == groupId) {
+                    _selectedGroup.value = _selectedGroup.value?.copy(profilePicUrl = downloadUrl)
+                }
+            } catch (e: Exception) { Log.e("STORAGE", "Error updating group photo: ${e.message}") }
+        }
+    }
+
     fun sendImageMessage(bitmap: Bitmap, disappearingSeconds: Int? = null) {
         val messageId = UUID.randomUUID().toString()
         
@@ -431,7 +457,15 @@ class MessageViewModel : ViewModel() {
         val listener = groupsCollection.whereArrayContains("members", myId)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
-                    _groups.value = snapshot.toObjects(Group::class.java)
+                    val updatedGroups = snapshot.toObjects(Group::class.java)
+                    _groups.value = updatedGroups
+                    // If the currently selected group was updated in Firestore, update the local selected state
+                    val currentId = _selectedGroup.value?.id
+                    if (currentId != null) {
+                        updatedGroups.find { it.id == currentId }?.let {
+                            _selectedGroup.value = it
+                        }
+                    }
                 }
             }
         activeListeners.add(listener)

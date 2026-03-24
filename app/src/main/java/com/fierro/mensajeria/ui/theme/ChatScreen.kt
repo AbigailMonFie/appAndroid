@@ -88,6 +88,11 @@ fun ChatScreen(
     var messageToOptions by remember { mutableStateOf<FirebaseMessage?>(null) }
     var selectedTimer by remember { mutableStateOf<Int?>(null) }
 
+    // Group management states
+    var showGroupOptions by remember { mutableStateOf(false) }
+    var showChangeGroupNameDialog by remember { mutableStateOf(false) }
+    var newGroupName by remember { mutableStateOf("") }
+
     val isBlocked = selectedUser?.let { blockedUserIds.contains(it.uid) } ?: false
 
     // Obtener el usuario seleccionado actualizado de la lista global de usuarios
@@ -125,6 +130,12 @@ fun ChatScreen(
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.sendImageMessageFromUri(uri, selectedTimer)
+    }
+
+    val groupImagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null && selectedGroup != null) {
+            viewModel.updateGroupPhoto(selectedGroup!!.id, uri)
+        }
     }
 
     val recordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
@@ -233,9 +244,11 @@ fun ChatScreen(
                         )
                         LaunchedEffect(Unit) { focusRequester.requestFocus() }
                     } else {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { if (selectedGroup != null) showParticipantsDialog = true }) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { 
+                            if (selectedGroup != null) showGroupOptions = true 
+                        }) {
                             Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
-                                val profilePic = if (selectedGroup != null) null else selectedUser?.profilePicUrl
+                                val profilePic = if (selectedGroup != null) selectedGroup?.profilePicUrl else selectedUser?.profilePicUrl
                                 if (profilePic != null) SubcomposeAsyncImage(model = profilePic, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                                 else Icon(if (selectedGroup != null) Icons.Default.Groups else Icons.Default.Person, null, tint = Color.Gray)
                             }
@@ -428,6 +441,67 @@ fun ChatScreen(
                 IconButton(onClick = { enlargedImageUrl = null }, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) { Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(32.dp)) }
             }
         }
+    }
+
+    if (showGroupOptions && selectedGroup != null) {
+        AlertDialog(
+            onDismissRequest = { showGroupOptions = false },
+            title = { Text("Opciones del grupo") },
+            text = {
+                Column {
+                    ListItem(
+                        headlineContent = { Text("Ver integrantes") },
+                        leadingContent = { Icon(Icons.Default.People, null) },
+                        modifier = Modifier.clickable { showParticipantsDialog = true; showGroupOptions = false }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Cambiar nombre") },
+                        leadingContent = { Icon(Icons.Default.Edit, null) },
+                        modifier = Modifier.clickable { 
+                            newGroupName = selectedGroup?.name ?: ""
+                            showChangeGroupNameDialog = true
+                            showGroupOptions = false 
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Cambiar foto de perfil") },
+                        leadingContent = { Icon(Icons.Default.PhotoCamera, null) },
+                        modifier = Modifier.clickable { 
+                            groupImagePickerLauncher.launch("image/*")
+                            showGroupOptions = false 
+                        }
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showGroupOptions = false }) { Text("Cancelar") } }
+        )
+    }
+
+    if (showChangeGroupNameDialog && selectedGroup != null) {
+        AlertDialog(
+            onDismissRequest = { showChangeGroupNameDialog = false },
+            title = { Text("Cambiar nombre del grupo") },
+            text = {
+                OutlinedTextField(
+                    value = newGroupName,
+                    onValueChange = { newGroupName = it },
+                    label = { Text("Nuevo nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (newGroupName.isNotBlank()) {
+                        viewModel.updateGroupName(selectedGroup!!.id, newGroupName)
+                        showChangeGroupNameDialog = false
+                    }
+                }) { Text("Guardar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangeGroupNameDialog = false }) { Text("Cancelar") }
+            }
+        )
     }
 
     if (showParticipantsDialog && selectedGroup != null) {
