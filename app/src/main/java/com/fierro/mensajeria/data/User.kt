@@ -12,5 +12,8 @@ data class User(
     @get:PropertyName("online")
     @set:PropertyName("online")
     var online: Boolean = false,
-    val lastSeen: Long = 0
+    val lastSeen: Long = 0,
+    val beeCode: String = "",
+    val contacts: List<String> = emptyList(),
+    val contactAliases: Map<String, String> = emptyMap() // Map<UID, Nickname>
 )

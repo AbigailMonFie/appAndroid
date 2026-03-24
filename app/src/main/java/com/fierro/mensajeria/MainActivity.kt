@@ -178,27 +178,25 @@ class MainActivity : FragmentActivity() {
 
                 LaunchedEffect(currentCall?.status) {
                     val call = currentCall
-                    if (call != null) {
-                        if (call.status == "CALLING" || call.status == "RINGING" || call.status == "ONGOING") {
-                            val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
-                            if (call.type == "VIDEO") permissions.add(Manifest.permission.CAMERA)
-                            
-                            val allGranted = permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
-                            
-                            if (!allGranted) {
-                                callPermissionLauncher.launch(permissions.toTypedArray())
-                            } else {
-                                setupAgora(call.receiverId, call.type == "VIDEO")
-                            }
+                    if (call != null && (call.status == "CALLING" || call.status == "RINGING" || call.status == "ONGOING")) {
+                        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+                        if (call.type == "VIDEO") permissions.add(Manifest.permission.CAMERA)
+                        
+                        val allGranted = permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+                        
+                        if (!allGranted) {
+                            callPermissionLauncher.launch(permissions.toTypedArray())
+                        } else {
+                            setupAgora(call.receiverId, call.type == "VIDEO")
+                        }
 
-                            // INICIAR SERVICIO EN SEGUNDO PLANO
-                            if (call.status == "ONGOING") {
-                                val serviceIntent = Intent(context, CallService::class.java)
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    context.startForegroundService(serviceIntent)
-                                } else {
-                                    context.startService(serviceIntent)
-                                }
+                        // INICIAR SERVICIO EN SEGUNDO PLANO
+                        if (call.status == "ONGOING") {
+                            val serviceIntent = Intent(context, CallService::class.java)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                context.startForegroundService(serviceIntent)
+                            } else {
+                                context.startService(serviceIntent)
                             }
                         }
                     } else {
@@ -248,25 +246,27 @@ class MainActivity : FragmentActivity() {
                     }
 
                     currentCall?.let { call ->
-                        CallOverlay(
-                            call = call,
-                            isSpeakerOn = isSpeakerphoneState.value,
-                            isMuted = isMutedState.value,
-                            onAccept = { chatViewModel.acceptCall() },
-                            onReject = { chatViewModel.endCall() },
-                            onToggleSpeaker = {
-                                val newState = !isSpeakerphoneState.value
-                                isSpeakerphoneState.value = newState
-                                rtcEngine?.setEnableSpeakerphone(newState)
-                            },
-                            onToggleMute = {
-                                val newState = !isMutedState.value
-                                isMutedState.value = newState
-                                rtcEngine?.muteLocalAudioStream(newState)
-                            },
-                            rtcEngine = rtcEngine,
-                            remoteUid = remoteUidState.intValue
-                        )
+                        if (call.status != "IDLE" && call.status != "ENDED") {
+                            CallOverlay(
+                                call = call,
+                                isSpeakerOn = isSpeakerphoneState.value,
+                                isMuted = isMutedState.value,
+                                onAccept = { chatViewModel.acceptCall() },
+                                onReject = { chatViewModel.endCall() },
+                                onToggleSpeaker = {
+                                    val newState = !isSpeakerphoneState.value
+                                    isSpeakerphoneState.value = newState
+                                    rtcEngine?.setEnableSpeakerphone(newState)
+                                },
+                                onToggleMute = {
+                                    val newState = !isMutedState.value
+                                    isMutedState.value = newState
+                                    rtcEngine?.muteLocalAudioStream(newState)
+                                },
+                                rtcEngine = rtcEngine,
+                                remoteUid = remoteUidState.intValue
+                            )
+                        }
                     }
                 }
             }
@@ -422,7 +422,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, viewModel: AuthViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, isDarkMode: Boolean, onThemeToggle: () -> Unit, onBiometricVerify: (onSuccess: () -> Unit) -> Unit = {}) {
     val users by viewModel.users.collectAsState()
@@ -443,12 +443,24 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
     var searchText by remember { mutableStateOf("") }
     var selectedTab by remember { mutableIntStateOf(0) }
     var isViewingArchived by remember { mutableStateOf(false) }
-    var showCreateGroupDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showNicknameDialog by remember { mutableStateOf(false) }
     var nicknameText by remember { mutableStateOf("") }
+    
+    var showAddContactDialog by remember { mutableStateOf(false) }
+    var beeCodeText by remember { mutableStateOf("") }
+
+    var selectedContactForMenu by remember { mutableStateOf<User?>(null) }
+    var showEditAliasDialog by remember { mutableStateOf(false) }
+    var aliasText by remember { mutableStateOf("") }
+
     var userToMenu by remember { mutableStateOf<User?>(null) }
     var groupToLeave by remember { mutableStateOf<Group?>(null) }
+
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var groupNameState by remember { mutableStateOf("") }
+    val selectedMembers = remember { mutableStateListOf<String>() }
+
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { if (it != null) viewModel.uploadProfilePicture(context, it) }
     val colorScheme = MaterialTheme.colorScheme
     val primaryColor = colorScheme.primary
@@ -466,10 +478,12 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                         else Icon(Icons.Default.Person, null, modifier = Modifier.size(40.dp), tint = Color.Gray)
                     }
                     Spacer(Modifier.width(16.dp))
-                    Text(ownUser?.displayName ?: "Mi Perfil", color = colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
+                    Column {
+                        Text(ownUser?.displayName ?: "Mi Perfil", color = colorScheme.onBackground, style = MaterialTheme.typography.titleLarge)
+                        Text("VeeCode: ${ownUser?.beeCode ?: "Generando..."}", color = primaryColor, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    }
                 }
                 HorizontalDivider(color = colorScheme.onBackground.copy(alpha = 0.1f))
-                NavigationDrawerItem(label = { Text("Nuevo Grupo") }, selected = false, onClick = { showCreateGroupDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.GroupAdd, null) })
                 NavigationDrawerItem(label = { Text("Ajustes") }, selected = false, onClick = { showSettingsDialog = true; scope.launch { startDrawerState.close() } }, icon = { Icon(Icons.Default.Settings, null) })
                 NavigationDrawerItem(label = { Text(if (isDarkMode) "Modo Claro" else "Modo Oscuro") }, selected = false, onClick = { onThemeToggle() }, icon = { Icon(if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode, null) })
                 Spacer(Modifier.weight(1f))
@@ -484,27 +498,46 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 drawerContent = {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         ModalDrawerSheet(drawerContainerColor = colorScheme.background) {
-                            Text("Contactos", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
-                            HorizontalDivider()
-                            LazyColumn {
-                                items(users.sortedBy { it.displayName }) { contact ->
-                                    NavigationDrawerItem(
-                                        label = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Box(Modifier.size(32.dp).clip(CircleShape).background(Color.LightGray), contentAlignment = Alignment.Center) {
-                                                    if (!contact.profilePicUrl.isNullOrEmpty()) {
-                                                        AsyncImage(model = contact.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                                    } else {
-                                                        Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Column {
+                                    Text("Contactos", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
+                                    HorizontalDivider()
+                                    val myContacts = users.filter { ownUser?.contacts?.contains(it.uid) == true }
+                                    if (myContacts.isEmpty()) {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Text("Aún no tienes contactos", color = Color.Gray)
+                                        }
+                                    } else {
+                                        LazyColumn {
+                                            items(myContacts.sortedBy { ownUser?.contactAliases?.get(it.uid) ?: it.displayName }) { contact ->
+                                                val displayName = ownUser?.contactAliases?.get(contact.uid) ?: contact.displayName
+                                                Box(modifier = Modifier.fillMaxWidth().combinedClickable(
+                                                    onClick = { viewModel.selectUser(contact); scope.launch { endDrawerState.close() } },
+                                                    onLongClick = { selectedContactForMenu = contact }
+                                                )) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                                        Box(Modifier.size(40.dp).clip(CircleShape).background(Color.LightGray), contentAlignment = Alignment.Center) {
+                                                            if (!contact.profilePicUrl.isNullOrEmpty()) {
+                                                                AsyncImage(model = contact.profilePicUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                                            } else {
+                                                                Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                                                            }
+                                                        }
+                                                        Spacer(Modifier.width(16.dp))
+                                                        Text(displayName, style = MaterialTheme.typography.bodyLarge)
                                                     }
                                                 }
-                                                Spacer(Modifier.width(12.dp))
-                                                Text(contact.displayName)
                                             }
-                                        },
-                                        selected = false,
-                                        onClick = { viewModel.selectUser(contact); scope.launch { endDrawerState.close() } }
-                                    )
+                                        }
+                                    }
+                                }
+                                FloatingActionButton(
+                                    onClick = { showAddContactDialog = true },
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                                    containerColor = primaryColor,
+                                    contentColor = Color.White
+                                ) {
+                                    Icon(painter = painterResource(id = R.drawable.agregar), contentDescription = "Agregar contacto", modifier = Modifier.size(24.dp))
                                 }
                             }
                         }
@@ -512,7 +545,20 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 }
             ) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Scaffold(bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) }) { padding ->
+                    Scaffold(
+                        bottomBar = { BottomNavigationBar(selectedItem = selectedTab, onItemSelected = { selectedTab = it }) },
+                        floatingActionButton = {
+                            if (selectedTab == 1) {
+                                FloatingActionButton(
+                                    onClick = { showCreateGroupDialog = true },
+                                    containerColor = primaryColor,
+                                    contentColor = Color.White
+                                ) {
+                                    Icon(Icons.Default.GroupAdd, "Crear grupo")
+                                }
+                            }
+                        }
+                    ) { padding ->
                         Column(modifier = Modifier.padding(padding)) {
                             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { scope.launch { startDrawerState.open() } }) { Icon(Icons.Default.Menu, null) }
@@ -536,13 +582,14 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                             }
                             when (selectedTab) {
                                 0 -> {
-                                    val filtered = users.filter { it.displayName.contains(searchText, true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) && lastMessages.containsKey(it.uid) }
+                                    val filtered = users.filter { (ownUser?.contactAliases?.get(it.uid) ?: it.displayName).contains(searchText, true) && (if (isViewingArchived) archivedUserIds.contains(it.uid) else !archivedUserIds.contains(it.uid)) && lastMessages.containsKey(it.uid) }
                                     val sorted = filtered.sortedWith(compareByDescending<User> { pinnedUserIds.contains(it.uid) }.thenByDescending { lastMessages[it.uid]?.timestamp ?: 0L })
                                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(sorted) { user ->
                                             val lastMsg = lastMessages[user.uid]
                                             val timeStr = lastMsg?.let { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(it.timestamp)) } ?: ""
-                                            ChatItem(user, lastMsg?.content ?: "", timeStr, unreadCounts[user.uid] ?: 0, pinnedUserIds.contains(user.uid), { viewModel.selectUser(user) }, { userToMenu = user })
+                                            val displayName = ownUser?.contactAliases?.get(user.uid) ?: user.displayName
+                                            ChatItem(user, displayName, lastMsg?.content ?: "", timeStr, unreadCounts[user.uid] ?: 0, pinnedUserIds.contains(user.uid), { viewModel.selectUser(user) }, { userToMenu = user })
                                         }
                                     }
                                 }
@@ -559,6 +606,142 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                 }
             }
         }
+    }
+
+    if (showCreateGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateGroupDialog = false },
+            title = { Text("Nuevo Grupo") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = groupNameState,
+                        onValueChange = { groupNameState = it },
+                        label = { Text("Nombre del grupo") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text("Seleccionar integrantes:", style = MaterialTheme.typography.labelLarge)
+                    LazyColumn(modifier = Modifier.height(200.dp)) {
+                        val contacts = users.filter { ownUser?.contacts?.contains(it.uid) == true }
+                        items(contacts) { contact ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                if (selectedMembers.contains(contact.uid)) selectedMembers.remove(contact.uid)
+                                else selectedMembers.add(contact.uid)
+                            }.padding(vertical = 4.dp)) {
+                                Checkbox(checked = selectedMembers.contains(contact.uid), onCheckedChange = null)
+                                Text(ownUser?.contactAliases?.get(contact.uid) ?: contact.displayName)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (groupNameState.isNotBlank() && selectedMembers.isNotEmpty()) {
+                        viewModel.createGroup(groupNameState, selectedMembers.toList())
+                        showCreateGroupDialog = false
+                        groupNameState = ""
+                        selectedMembers.clear()
+                    }
+                }) { Text("Crear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateGroupDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    if (showAddContactDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddContactDialog = false },
+            title = { Text("Agregar contacto") },
+            text = {
+                Column {
+                    Text("Ingresa el VeeCode de tu amigo:", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = beeCodeText,
+                        onValueChange = { beeCodeText = it.uppercase() },
+                        label = { Text("VeeCode") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (beeCodeText.isNotBlank()) {
+                        viewModel.addContactByBeeCode(beeCodeText) { result ->
+                            Toast.makeText(context, result, Toast.LENGTH_SHORT).show()
+                            if (result.startsWith("Contacto agregado")) {
+                                showAddContactDialog = false
+                                beeCodeText = ""
+                            }
+                        }
+                    }
+                }) { Text("Agregar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddContactDialog = false; beeCodeText = "" }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    if (selectedContactForMenu != null) {
+        AlertDialog(
+            onDismissRequest = { selectedContactForMenu = null },
+            title = { Text(ownUser?.contactAliases?.get(selectedContactForMenu!!.uid) ?: selectedContactForMenu!!.displayName) },
+            text = {
+                Column {
+                    ListItem(
+                        headlineContent = { Text("Editar apodo") },
+                        leadingContent = { Icon(Icons.Default.Edit, null) },
+                        modifier = Modifier.clickable {
+                            aliasText = ownUser?.contactAliases?.get(selectedContactForMenu!!.uid) ?: selectedContactForMenu!!.displayName
+                            showEditAliasDialog = true
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Eliminar contacto", color = Color.Red) },
+                        leadingContent = { Icon(Icons.Default.Delete, null, tint = Color.Red) },
+                        modifier = Modifier.clickable {
+                            viewModel.removeContact(selectedContactForMenu!!.uid)
+                            selectedContactForMenu = null
+                        }
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { selectedContactForMenu = null }) { Text("Cerrar") } }
+        )
+    }
+
+    if (showEditAliasDialog && selectedContactForMenu != null) {
+        AlertDialog(
+            onDismissRequest = { showEditAliasDialog = false },
+            title = { Text("Editar apodo") },
+            text = {
+                OutlinedTextField(
+                    value = aliasText,
+                    onValueChange = { aliasText = it },
+                    label = { Text("Apodo") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (aliasText.isNotBlank()) {
+                        viewModel.updateContactAlias(selectedContactForMenu!!.uid, aliasText)
+                        showEditAliasDialog = false
+                        selectedContactForMenu = null
+                    }
+                }) { Text("Guardar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditAliasDialog = false }) { Text("Cancelar") }
+            }
+        )
     }
 
     if (showNicknameDialog) {
@@ -582,7 +765,9 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
                     }
                 }) { Text("Guardar") }
             },
-            dismissButton = { TextButton(onClick = { showNicknameDialog = false }) { Text("Cancelar") } }
+            dismissButton = {
+                TextButton(onClick = { showNicknameDialog = false }) { Text("Cancelar") }
+            }
         )
     }
 
@@ -620,15 +805,39 @@ fun UserListScreen(viewModel: MessageViewModel, authViewModel: AuthViewModel, is
     }
 
     if (userToMenu != null) {
+        val isPinned = pinnedUserIds.contains(userToMenu!!.uid)
         AlertDialog(
             onDismissRequest = { userToMenu = null },
-            confirmButton = {},
-            title = { Text("Opciones") },
+            confirmButton = { TextButton(onClick = { userToMenu = null }) { Text("Cerrar") } },
+            title = { Text("Opciones de chat") },
             text = {
                 Column {
-                    ListItem(headlineContent = { Text("Archivar") }, modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid); userToMenu = null })
-                    ListItem(headlineContent = { Text("Fijar") }, modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid); userToMenu = null })
-                    ListItem(headlineContent = { Text("Bloquear") }, modifier = Modifier.clickable { viewModel.toggleBlock(userToMenu!!.uid); userToMenu = null })
+                    ListItem(
+                        headlineContent = { Text(if (isPinned) "Desfijar" else "Fijar") },
+                        leadingContent = { Icon(if (isPinned) Icons.Default.PushPin else Icons.Default.PushPin, null, tint = if (isPinned) primaryColor else Color.Gray) },
+                        modifier = Modifier.clickable { viewModel.togglePin(userToMenu!!.uid); userToMenu = null }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Archivar") },
+                        leadingContent = { Icon(Icons.Default.Archive, null) },
+                        modifier = Modifier.clickable { viewModel.toggleArchive(userToMenu!!.uid); userToMenu = null }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Bloquear") },
+                        leadingContent = { Icon(Icons.Default.Block, null, tint = Color.Red) },
+                        modifier = Modifier.clickable { viewModel.toggleBlock(userToMenu!!.uid); userToMenu = null }
+                    )
+                    HorizontalDivider()
+                    ListItem(
+                        headlineContent = { Text("Vaciar chat", color = Color.Red) },
+                        leadingContent = { Icon(Icons.Default.DeleteSweep, null, tint = Color.Red) },
+                        modifier = Modifier.clickable { 
+                            viewModel.selectUser(userToMenu!!)
+                            viewModel.clearChat()
+                            viewModel.deselectUser()
+                            userToMenu = null 
+                        }
+                    )
                 }
             }
         )
@@ -785,7 +994,7 @@ fun CallLogItem(log: CallLog) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+fun ChatItem(user: User, displayName: String, subtitle: String, time: String, unreadCount: Int, isPinned: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(56.dp).clip(CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
@@ -798,7 +1007,7 @@ fun ChatItem(user: User, subtitle: String, time: String, unreadCount: Int, isPin
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(user.displayName, fontWeight = FontWeight.Bold, maxLines = 1, style = MaterialTheme.typography.bodyLarge)
+                    Text(displayName, fontWeight = FontWeight.Bold, maxLines = 1, style = MaterialTheme.typography.bodyLarge)
                     if (isPinned) {
                         Spacer(Modifier.width(4.dp))
                         Icon(Icons.Default.PushPin, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)

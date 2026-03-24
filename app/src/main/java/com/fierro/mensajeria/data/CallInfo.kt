@@ -8,5 +8,6 @@ data class CallInfo(
     val receiverName: String = "",
     val receiverProfilePicUrl: String? = null,
     val type: String = "AUDIO", // "AUDIO" o "VIDEO"
-    val status: String = "IDLE" // "IDLE", "RINGING", "ONGOING", "ENDED"
+    val status: String = "IDLE", // "IDLE", "RINGING", "ONGOING", "ENDED"
+    val timestamp: Long = 0
 )

@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -169,7 +170,14 @@ class MessageViewModel : ViewModel() {
         if (myId == "anonimo") return
         val listener = usersCollection.document(myId).addSnapshotListener { snapshot, _ ->
             if (snapshot != null && snapshot.exists()) {
-                _ownUser.value = snapshot.toObject(User::class.java)
+                val user = snapshot.toObject(User::class.java)
+                if (user != null) {
+                    _ownUser.value = user
+                    if (user.beeCode.isEmpty()) {
+                        val newCode = UUID.randomUUID().toString().substring(0, 7).uppercase()
+                        usersCollection.document(myId).update("beeCode", newCode)
+                    }
+                }
             }
         }
         activeListeners.add(listener)
@@ -397,6 +405,50 @@ class MessageViewModel : ViewModel() {
         }
     }
 
+    fun addContactByBeeCode(beeCode: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val code = beeCode.trim().uppercase()
+                val query = usersCollection.whereEqualTo("beeCode", code).get().await()
+                if (query.isEmpty) {
+                    onResult("No se encontró ningún usuario con ese código.")
+                } else {
+                    val targetUser = query.documents[0].toObject(User::class.java)
+                    if (targetUser != null) {
+                        if (targetUser.uid == myId) {
+                            onResult("No puedes agregarte a ti mismo.")
+                        } else {
+                            usersCollection.document(myId).update("contacts", FieldValue.arrayUnion(targetUser.uid)).await()
+                            onResult("Contacto agregado: ${targetUser.displayName}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                onResult("Error al agregar contacto: ${e.message}")
+            }
+        }
+    }
+
+    fun updateContactAlias(contactId: String, newAlias: String) {
+        viewModelScope.launch {
+            try {
+                val path = "contactAliases.$contactId"
+                usersCollection.document(myId).update(path, newAlias).await()
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error update alias: ${e.message}") }
+        }
+    }
+
+    fun removeContact(contactId: String) {
+        viewModelScope.launch {
+            try {
+                usersCollection.document(myId).update(
+                    "contacts", FieldValue.arrayRemove(contactId),
+                    "contactAliases.$contactId", FieldValue.delete()
+                ).await()
+            } catch (e: Exception) { Log.e("FIRESTORE", "Error remove contact: ${e.message}") }
+        }
+    }
+
     fun sendImageMessage(bitmap: Bitmap, disappearingSeconds: Int? = null) {
         val messageId = UUID.randomUUID().toString()
         
@@ -477,6 +529,13 @@ class MessageViewModel : ViewModel() {
             if (snapshot != null && snapshot.exists()) {
                 val call = snapshot.toObject(CallInfo::class.java)
                 if (call?.status == "RINGING" || call?.status == "ONGOING") {
+                    // Check if call is fresh (less than 2 minutes old) to avoid ghosts on first install
+                    val now = System.currentTimeMillis()
+                    if (call.timestamp != 0L && (now - call.timestamp) > 120000) {
+                        callsCollection.document(myId).delete()
+                        _currentCall.value = null
+                        return@addSnapshotListener
+                    }
                     _currentCall.value = call
                     if (call.status == "RINGING") {
                         addCallToLog(CallLog(UUID.randomUUID().toString(), call.callerName, call.type, System.currentTimeMillis(), false))
@@ -504,7 +563,8 @@ class MessageViewModel : ViewModel() {
             receiverName = targetName,
             receiverProfilePicUrl = targetPic,
             type = type,
-            status = "RINGING"
+            status = "RINGING",
+            timestamp = System.currentTimeMillis()
         )
         
         if (_selectedGroup.value != null) {
